@@ -1,8 +1,9 @@
 {
   "expo": {
-    "name": "kandu-fresh",
+    "name": "KanDu",
     "slug": "kandu-fresh",
     "version": "1.0.0",
+    "scheme": "kandu",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -13,7 +14,8 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.kandu.homerepair"
     },
     "android": {
       "adaptiveIcon": {
@@ -21,10 +23,23 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.kandu.homerepair"
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "8721f085-479f-467e-a19f-a1214814a90f"
+      }
+    },
+    "owner": "jcataldi",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/8721f085-479f-467e-a19f-a1214814a90f"
     }
   }
 }

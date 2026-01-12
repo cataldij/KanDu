@@ -1,99 +1,104 @@
 import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View, TouchableOpacity, Image } from 'react-native';
+import { ActivityIndicator, View, StyleSheet } from 'react-native';
+import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import HomeScreen from './screens/HomeScreen';
+import DiagnosisScreen from './screens/DiagnosisScreen';
+import ResultsScreen from './screens/ResultsScreen';
+import AuthScreen from './screens/AuthScreen';
+import DiagnosisHistoryScreen from './screens/DiagnosisHistoryScreen';
 
-export default function App() {
-  const categories = [
-    { name: 'Appliances', emoji: '🔧', id: 'appliances' },
-    { name: 'HVAC', emoji: '❄️', id: 'hvac' },
-    { name: 'Plumbing', emoji: '🚰', id: 'plumbing' },
-    { name: 'Electrical', emoji: '⚡', id: 'electrical' },
-  ];
-
-  const handleCategoryPress = (categoryId: string) => {
-    console.log(`Selected category: ${categoryId}`);
+export type RootStackParamList = {
+  Home: undefined;
+  Diagnosis: { category: string };
+  Results: {
+    diagnosis: string;
+    category: string;
+    description: string;
+    imageUri?: string;
+    videoUri?: string;
+    fromHistory?: boolean;
   };
+  Auth: { mode?: 'login' | 'signup' };
+  DiagnosisHistory: undefined;
+};
+
+const Stack = createNativeStackNavigator<RootStackParamList>();
+
+function AppNavigator() {
+  const { loading } = useAuth();
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#1E5AA8" />
+      </View>
+    );
+  }
 
   return (
-    <View style={styles.container}>
-      <StatusBar style="auto" />
-
-      <Image
-        source={require('./assets/KanDu logo.png')}
-        style={styles.logo}
-        resizeMode="contain"
+    <Stack.Navigator
+      initialRouteName="Home"
+      screenOptions={{
+        headerStyle: {
+          backgroundColor: '#1E5AA8',
+        },
+        headerTintColor: '#fff',
+        headerTitleStyle: {
+          fontWeight: 'bold',
+          fontSize: 24,
+        },
+      }}
+    >
+      <Stack.Screen
+        name="Home"
+        component={HomeScreen}
+        options={{ title: 'KanDu™', headerBackTitle: 'KanDu™' }}
       />
+      <Stack.Screen
+        name="Diagnosis"
+        component={DiagnosisScreen}
+        options={{ title: 'Diagnose' }}
+      />
+      <Stack.Screen
+        name="Results"
+        component={ResultsScreen}
+        options={{ title: 'Diagnosis Results' }}
+      />
+      <Stack.Screen
+        name="Auth"
+        component={AuthScreen}
+        options={{
+          title: 'Sign In',
+          presentation: 'modal',
+        }}
+      />
+      <Stack.Screen
+        name="DiagnosisHistory"
+        component={DiagnosisHistoryScreen}
+        options={{ title: 'My Diagnoses' }}
+      />
+    </Stack.Navigator>
+  );
+}
 
-      <Text style={styles.title}>What needs fixing?</Text>
-
-      <View style={styles.categoriesContainer}>
-        {categories.map((category) => (
-          <TouchableOpacity
-            key={category.id}
-            style={styles.categoryButton}
-            onPress={() => handleCategoryPress(category.id)}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.emoji}>{category.emoji}</Text>
-            <Text style={styles.categoryText}>{category.name}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-    </View>
+export default function App() {
+  return (
+    <AuthProvider>
+      <NavigationContainer>
+        <StatusBar style="auto" />
+        <AppNavigator />
+      </NavigationContainer>
+    </AuthProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  loadingContainer: {
     flex: 1,
-    backgroundColor: '#f0f7fb',
+    justifyContent: 'center',
     alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  logo: {
-    width: 200,
-    height: 80,
-    marginBottom: 20,
-  },
-  title: {
-    fontSize: 28,
-    fontWeight: 'bold',
-    color: '#1E5AA8',
-    marginBottom: 40,
-  },
-  categoriesContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 16,
-    maxWidth: 400,
-  },
-  categoryButton: {
-    backgroundColor: '#ffffff',
-    borderRadius: 16,
-    padding: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 160,
-    height: 160,
-    shadowColor: '#17A2B8',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 4,
-    borderWidth: 2,
-    borderColor: '#C2E7EC',
-  },
-  emoji: {
-    fontSize: 48,
-    marginBottom: 12,
-  },
-  categoryText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1E5AA8',
+    backgroundColor: '#E8F4F8',
   },
 });

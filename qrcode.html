@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>KanDu Expo QR Code</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      background: #E8F4F8;
+    }
+    h1 { color: #1E5AA8; }
+    #qrcode {
+      padding: 20px;
+      background: white;
+      border-radius: 16px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    #qrcode img {
+      display: block;
+    }
+    .url {
+      margin-top: 20px;
+      font-size: 14px;
+      color: #333;
+      background: white;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-family: monospace;
+    }
+    .instructions {
+      margin-top: 20px;
+      max-width: 400px;
+      text-align: center;
+      color: #555;
+    }
+    .download-btn {
+      margin-top: 15px;
+      padding: 12px 24px;
+      background: #1E5AA8;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 16px;
+    }
+    .download-btn:hover {
+      background: #164785;
+    }
+  </style>
+</head>
+<body>
+  <h1>KanDu - Expo Go</h1>
+  <div id="qrcode"></div>
+  <div class="url">exp://cjgi6ss-anonymous-8088.exp.direct</div>
+  <button class="download-btn" onclick="downloadQR()">Download QR Code</button>
+  <div class="instructions">
+    <p><strong>To connect:</strong></p>
+    <ol style="text-align: left;">
+      <li>Install <strong>Expo Go</strong> from App Store or Play Store</li>
+      <li>Open Expo Go app</li>
+      <li>Tap "Scan QR Code" and scan this code</li>
+      <li>Or tap "Enter URL manually" and paste the URL above</li>
+    </ol>
+    <p style="color: #888; font-size: 12px;">Note: Use the Expo Go app's scanner, not your phone's camera</p>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+  <script>
+    const url = "exp://cjgi6ss-anonymous-8088.exp.direct";
+
+    QRCode.toCanvas(document.createElement('canvas'), url, {
+      width: 300,
+      margin: 2,
+      color: {
+        dark: '#000000',
+        light: '#ffffff'
+      }
+    }, function(error, canvas) {
+      if (error) {
+        console.error(error);
+        return;
+      }
+      document.getElementById('qrcode').appendChild(canvas);
+    });
+
+    function downloadQR() {
+      const canvas = document.querySelector('#qrcode canvas');
+      const link = document.createElement('a');
+      link.download = 'kandu-expo-qr.png';
+      link.href = canvas.toDataURL('image/png');
+      link.click();
+    }
+  </script>
+</body>
+</html>

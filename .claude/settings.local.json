@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx expo install:*)",
+      "Bash(npx expo start --clear)",
+      "Bash(timeout 15 cmd:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill:*)",
+      "Bash(timeout 20 cmd:*)",
+      "Bash(npx expo start)",
+      "Bash(npm start)",
+      "Bash(timeout /t 2)",
+      "Bash(npx expo start --clear --port 8082)",
+      "Bash(curl:*)",
+      "Bash(npx expo start --tunnel)",
+      "Bash(start \"\" \"c:\\\\Users\\\\socce\\\\OneDrive\\\\Documents\\\\kandu-fresh\\\\qrcode.html\")"
+    ]
+  }
+}

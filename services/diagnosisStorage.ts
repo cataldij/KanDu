@@ -1,6 +1,8 @@
 import { supabase } from './supabase';
 import { FreeDiagnosis, AdvancedDiagnosis } from './gemini';
 
+export type DiagnosisStatus = 'open' | 'watching' | 'resolved';
+
 export interface SavedDiagnosis {
   id: string;
   user_id: string;
@@ -9,6 +11,17 @@ export interface SavedDiagnosis {
   diagnosis_data: FreeDiagnosis | AdvancedDiagnosis;
   is_advanced: boolean;
   created_at: string;
+  status: DiagnosisStatus;
+  resolution_note: string | null;
+  resolved_at: string | null;
+  follow_up_at: string | null;
+}
+
+export interface DiagnosisUpdate {
+  status?: DiagnosisStatus;
+  resolution_note?: string | null;
+  resolved_at?: string | null;
+  follow_up_at?: string | null;
 }
 
 export async function saveDiagnosis(
@@ -19,6 +32,10 @@ export async function saveDiagnosis(
   isAdvanced: boolean
 ): Promise<{ data: SavedDiagnosis | null; error: Error | null }> {
   try {
+    // Set follow_up_at to 3 days from now
+    const followUpDate = new Date();
+    followUpDate.setDate(followUpDate.getDate() + 3);
+
     const { data, error } = await supabase
       .from('diagnoses')
       .insert({
@@ -27,6 +44,8 @@ export async function saveDiagnosis(
         description,
         diagnosis_data: diagnosisData,
         is_advanced: isAdvanced,
+        status: 'open',
+        follow_up_at: followUpDate.toISOString(),
       })
       .select()
       .single();
@@ -35,6 +54,26 @@ export async function saveDiagnosis(
     return { data: data as SavedDiagnosis, error: null };
   } catch (error) {
     console.error('Error saving diagnosis:', error);
+    return { data: null, error: error as Error };
+  }
+}
+
+export async function updateDiagnosis(
+  diagnosisId: string,
+  updates: DiagnosisUpdate
+): Promise<{ data: SavedDiagnosis | null; error: Error | null }> {
+  try {
+    const { data, error } = await supabase
+      .from('diagnoses')
+      .update(updates)
+      .eq('id', diagnosisId)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return { data: data as SavedDiagnosis, error: null };
+  } catch (error) {
+    console.error('Error updating diagnosis:', error);
     return { data: null, error: error as Error };
   }
 }
@@ -89,6 +128,30 @@ export async function deleteDiagnosis(
   } catch (error) {
     console.error('Error deleting diagnosis:', error);
     return { error: error as Error };
+  }
+}
+
+export async function getDueFollowUp(
+  userId: string
+): Promise<{ data: SavedDiagnosis | null; error: Error | null }> {
+  try {
+    const now = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from('diagnoses')
+      .select('*')
+      .eq('user_id', userId)
+      .neq('status', 'resolved')
+      .lte('follow_up_at', now)
+      .order('follow_up_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) throw error;
+    return { data: data as SavedDiagnosis | null, error: null };
+  } catch (error) {
+    console.error('Error fetching due follow-up:', error);
+    return { data: null, error: error as Error };
   }
 }
 

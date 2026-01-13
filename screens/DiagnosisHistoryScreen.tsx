@@ -8,14 +8,18 @@ import {
   ActivityIndicator,
   RefreshControl,
   Alert,
+  TextInput,
+  Modal,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../contexts/AuthContext';
 import {
   SavedDiagnosis,
+  DiagnosisStatus,
   getUserDiagnoses,
   deleteDiagnosis,
+  updateDiagnosis,
   getCategoryInfo,
   formatDiagnosisDate,
 } from '../services/diagnosisStorage';
@@ -42,6 +46,9 @@ export default function DiagnosisHistoryScreen({ navigation }: DiagnosisHistoryS
   const [diagnoses, setDiagnoses] = useState<SavedDiagnosis[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [resolveModalVisible, setResolveModalVisible] = useState(false);
+  const [selectedDiagnosis, setSelectedDiagnosis] = useState<SavedDiagnosis | null>(null);
+  const [resolutionNote, setResolutionNote] = useState('');
 
   const loadDiagnoses = useCallback(async () => {
     if (!user) return;
@@ -96,13 +103,80 @@ export default function DiagnosisHistoryScreen({ navigation }: DiagnosisHistoryS
     );
   };
 
+  const handleStatusAction = (diagnosis: SavedDiagnosis) => {
+    if (diagnosis.status === 'resolved') {
+      // Reopen if already resolved
+      Alert.alert(
+        'Reopen Issue',
+        'Do you want to mark this issue as open again?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Reopen',
+            onPress: async () => {
+              const { data, error } = await updateDiagnosis(diagnosis.id, {
+                status: 'open',
+                resolution_note: null,
+                resolved_at: null,
+              });
+              if (error) {
+                Alert.alert('Error', 'Failed to update status');
+              } else if (data) {
+                setDiagnoses(prev => prev.map(d => d.id === diagnosis.id ? data : d));
+              }
+            },
+          },
+        ]
+      );
+    } else {
+      // Show resolve modal
+      setSelectedDiagnosis(diagnosis);
+      setResolutionNote('');
+      setResolveModalVisible(true);
+    }
+  };
+
+  const handleResolve = async () => {
+    if (!selectedDiagnosis) return;
+
+    const { data, error } = await updateDiagnosis(selectedDiagnosis.id, {
+      status: 'resolved',
+      resolution_note: resolutionNote.trim() || null,
+      resolved_at: new Date().toISOString(),
+    });
+
+    if (error) {
+      Alert.alert('Error', 'Failed to mark as resolved');
+    } else if (data) {
+      setDiagnoses(prev => prev.map(d => d.id === selectedDiagnosis.id ? data : d));
+      setResolveModalVisible(false);
+      setSelectedDiagnosis(null);
+      setResolutionNote('');
+    }
+  };
+
+  const handleToggleWatching = async (diagnosis: SavedDiagnosis) => {
+    const newStatus: DiagnosisStatus = diagnosis.status === 'watching' ? 'open' : 'watching';
+    const { data, error } = await updateDiagnosis(diagnosis.id, { status: newStatus });
+
+    if (error) {
+      Alert.alert('Error', 'Failed to update status');
+    } else if (data) {
+      setDiagnoses(prev => prev.map(d => d.id === diagnosis.id ? data : d));
+    }
+  };
+
   const renderDiagnosisItem = ({ item }: { item: SavedDiagnosis }) => {
     const categoryInfo = getCategoryInfo(item.category);
     const diagData = item.diagnosis_data;
+    const status = item.status || 'open';
 
     return (
       <TouchableOpacity
-        style={styles.diagnosisCard}
+        style={[
+          styles.diagnosisCard,
+          status === 'resolved' && styles.resolvedCard,
+        ]}
         onPress={() => handleViewDiagnosis(item)}
         onLongPress={() => handleDeleteDiagnosis(item)}
         activeOpacity={0.7}
@@ -112,14 +186,26 @@ export default function DiagnosisHistoryScreen({ navigation }: DiagnosisHistoryS
             <Text style={styles.categoryEmoji}>{categoryInfo.emoji}</Text>
             <Text style={styles.categoryName}>{categoryInfo.name}</Text>
           </View>
-          <View style={styles.dateBadge}>
-            <Text style={styles.dateText}>{formatDiagnosisDate(item.created_at)}</Text>
+          <View style={styles.headerRight}>
+            <View style={[styles.statusBadge, { backgroundColor: getStatusColor(status) }]}>
+              <Text style={styles.statusBadgeText}>{getStatusLabel(status)}</Text>
+            </View>
+            <View style={styles.dateBadge}>
+              <Text style={styles.dateText}>{formatDiagnosisDate(item.created_at)}</Text>
+            </View>
           </View>
         </View>
 
         <Text style={styles.diagnosisSummary} numberOfLines={3}>
           {diagData.diagnosis.summary}
         </Text>
+
+        {item.resolution_note && (
+          <View style={styles.resolutionNoteContainer}>
+            <Text style={styles.resolutionNoteLabel}>What fixed it:</Text>
+            <Text style={styles.resolutionNoteText}>{item.resolution_note}</Text>
+          </View>
+        )}
 
         <View style={styles.cardFooter}>
           <View style={styles.badges}>
@@ -137,7 +223,17 @@ export default function DiagnosisHistoryScreen({ navigation }: DiagnosisHistoryS
               </Text>
             </View>
           </View>
-          <Text style={styles.viewText}>Tap to view</Text>
+          <TouchableOpacity
+            style={[
+              styles.statusActionButton,
+              status === 'resolved' ? styles.reopenButton : styles.resolveButton,
+            ]}
+            onPress={() => handleStatusAction(item)}
+          >
+            <Text style={styles.statusActionText}>
+              {status === 'resolved' ? 'Reopen' : 'Mark Fixed'}
+            </Text>
+          </TouchableOpacity>
         </View>
       </TouchableOpacity>
     );
@@ -200,6 +296,53 @@ export default function DiagnosisHistoryScreen({ navigation }: DiagnosisHistoryS
           }
         />
       )}
+
+      {/* Resolve Modal */}
+      <Modal
+        animationType="slide"
+        transparent={true}
+        visible={resolveModalVisible}
+        onRequestClose={() => setResolveModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Mark as Fixed</Text>
+            <Text style={styles.modalSubtitle}>
+              What fixed the issue? (optional)
+            </Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="e.g., Replaced the filter, tightened connection..."
+              value={resolutionNote}
+              onChangeText={setResolutionNote}
+              multiline
+              numberOfLines={3}
+              textAlignVertical="top"
+            />
+            <View style={styles.modalButtons}>
+              <TouchableOpacity
+                style={styles.modalCancelButton}
+                onPress={() => setResolveModalVisible(false)}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.modalResolveButton}
+                onPress={handleResolve}
+              >
+                <LinearGradient
+                  colors={['#10b981', '#059669']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.modalResolveGradient}
+                >
+                  <Text style={styles.modalResolveText}>Mark Fixed</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -227,6 +370,30 @@ function formatUrgency(urgency: string): string {
       return 'Can Wait';
     default:
       return 'Unknown';
+  }
+}
+
+function getStatusColor(status: string): string {
+  switch (status) {
+    case 'resolved':
+      return '#10b981';
+    case 'watching':
+      return '#f59e0b';
+    case 'open':
+    default:
+      return '#3b82f6';
+  }
+}
+
+function getStatusLabel(status: string): string {
+  switch (status) {
+    case 'resolved':
+      return 'Fixed';
+    case 'watching':
+      return 'Watching';
+    case 'open':
+    default:
+      return 'Open';
   }
 }
 
@@ -386,5 +553,126 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  statusBadgeText: {
+    fontSize: 11,
+    fontWeight: 'bold',
+    color: '#ffffff',
+  },
+  resolvedCard: {
+    opacity: 0.75,
+    borderColor: '#10b981',
+  },
+  resolutionNoteContainer: {
+    backgroundColor: '#f0fdf4',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: '#10b981',
+  },
+  resolutionNoteLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#166534',
+    marginBottom: 4,
+  },
+  resolutionNoteText: {
+    fontSize: 13,
+    color: '#14532d',
+    lineHeight: 18,
+  },
+  statusActionButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+  },
+  resolveButton: {
+    backgroundColor: '#10b981',
+  },
+  reopenButton: {
+    backgroundColor: '#64748b',
+  },
+  statusActionText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  modalContent: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 24,
+    width: '100%',
+    maxWidth: 400,
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1E5AA8',
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  modalSubtitle: {
+    fontSize: 14,
+    color: '#64748b',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  modalInput: {
+    borderWidth: 2,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    padding: 14,
+    fontSize: 15,
+    minHeight: 100,
+    marginBottom: 20,
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modalCancelButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#e2e8f0',
+    alignItems: 'center',
+  },
+  modalCancelText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  modalResolveButton: {
+    flex: 1,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  modalResolveGradient: {
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  modalResolveText: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#ffffff',
   },
 });

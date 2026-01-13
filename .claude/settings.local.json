@@ -14,7 +14,12 @@
       "Bash(npx expo start --clear --port 8082)",
       "Bash(curl:*)",
       "Bash(npx expo start --tunnel)",
-      "Bash(start \"\" \"c:\\\\Users\\\\socce\\\\OneDrive\\\\Documents\\\\kandu-fresh\\\\qrcode.html\")"
+      "Bash(start \"\" \"c:\\\\Users\\\\socce\\\\OneDrive\\\\Documents\\\\kandu-fresh\\\\qrcode.html\")",
+      "Bash(npx eas update:*)",
+      "Bash(npx eas update:list:*)",
+      "Bash(npx eas build:*)",
+      "Bash(npx expo start --clear --port 8081)",
+      "Bash(npx eas build:list:*)"
     ]
   }
 }

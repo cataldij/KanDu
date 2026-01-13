@@ -48,6 +48,10 @@ export interface FreeDiagnosis {
     urgency: 'immediate' | 'soon' | 'can_wait';
     isDIYable: boolean;
   };
+  detectedItem?: {
+    label: string;
+    confidence: 'high' | 'medium' | 'low';
+  };
   youtubeVideos: Array<{
     title: string;
     searchQuery: string;
@@ -115,16 +119,21 @@ Category: ${request.category}
 Problem description: ${request.description}
 
 YOUR TASK:
-1. Provide a clear, concise diagnosis (2-3 sentences)
-2. List 2-3 likely causes
-3. Assess risk level and urgency
-4. Determine if this is DIY-able or needs a pro
-5. Recommend 3 helpful YouTube videos with search queries
-6. List critical safety warnings
-7. Suggest immediate next steps
+1. Identify the item/appliance in the image (e.g., "GE Dishwasher", "Toilet Fill Valve", "Honda Civic Engine")
+2. Provide a clear, concise diagnosis (2-3 sentences)
+3. List 2-3 likely causes
+4. Assess risk level and urgency
+5. Determine if this is DIY-able or needs a pro
+6. Recommend 3 helpful YouTube videos with search queries
+7. List critical safety warnings
+8. Suggest immediate next steps
 
 OUTPUT (STRICT JSON ONLY):
 {
+  "detectedItem": {
+    "label": "Brand + Item type (e.g., 'GE Dishwasher', 'Kohler Toilet', 'Ford F-150 Engine')",
+    "confidence": "high" | "medium" | "low"
+  },
   "diagnosis": {
     "summary": "Clear 2-3 sentence explanation of what's likely wrong",
     "likelyCauses": [
@@ -167,6 +176,7 @@ OUTPUT (STRICT JSON ONLY):
 }
 
 IMPORTANT:
+- ALWAYS include detectedItem with the identified appliance/item name - this is REQUIRED
 - Keep diagnosis simple and actionable
 - YouTube searchQuery should be specific enough to find relevant videos (include make/model if visible, specific part names, etc.)
 - Safety warnings should be critical only (don't over-warn)
@@ -197,6 +207,7 @@ IMPORTANT:
     }
 
     const diagnosis = JSON.parse(jsonMatch[0]);
+    console.log('Free diagnosis parsed. detectedItem:', JSON.stringify(diagnosis.detectedItem));
     return diagnosis;
   } catch (error) {
     console.error('Error getting free diagnosis:', error);

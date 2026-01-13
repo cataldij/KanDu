@@ -16,10 +16,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { WebView } from 'react-native-webview';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
+import * as Location from 'expo-location';
+import * as Clipboard from 'expo-clipboard';
 import { FreeDiagnosis, AdvancedDiagnosis, getAdvancedDiagnosis } from '../services/gemini';
 import { generatePrimaryLink, getLinksForCategory, AffiliateLink } from '../services/affiliate';
 import { useAuth } from '../contexts/AuthContext';
 import { saveDiagnosis } from '../services/diagnosisStorage';
+import { LocalPro, getLocalPros, generateCallScript, buildMapsSearchUrl } from '../services/localPros';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -44,7 +47,9 @@ type ResultsScreenProps = {
 
 export default function ResultsScreen({ navigation, route }: ResultsScreenProps) {
   const { diagnosis: diagnosisString, category, description, imageUri, videoUri, fromHistory } = route.params;
-  const [diagnosis, setDiagnosis] = useState<FreeDiagnosis | AdvancedDiagnosis>(JSON.parse(diagnosisString));
+  const parsedDiagnosis = JSON.parse(diagnosisString);
+  console.log('ResultsScreen - detectedItem:', JSON.stringify(parsedDiagnosis.detectedItem));
+  const [diagnosis, setDiagnosis] = useState<FreeDiagnosis | AdvancedDiagnosis>(parsedDiagnosis);
   const [isUpgrading, setIsUpgrading] = useState(false);
   const [isAdvanced, setIsAdvanced] = useState(false);
   const [videoModalVisible, setVideoModalVisible] = useState(false);
@@ -52,6 +57,12 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
   const [shopModalVisible, setShopModalVisible] = useState(false);
   const [currentShopUrl, setCurrentShopUrl] = useState('');
   const [currentShopRetailer, setCurrentShopRetailer] = useState('');
+
+  // Local Pros state
+  const [localPros, setLocalPros] = useState<LocalPro[]>([]);
+  const [localProsLoading, setLocalProsLoading] = useState(false);
+  const [localProsError, setLocalProsError] = useState<string | null>(null);
+  const [locationDenied, setLocationDenied] = useState(false);
 
   const { user } = useAuth();
   const hasSavedRef = useRef(false);
@@ -75,6 +86,95 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
     };
     saveToHistory();
   }, [user, category, description, diagnosis, isAdvanced, fromHistory]);
+
+  // Always show local help section - users can decide if they want to use it
+  const shouldShowLocalHelp = true;
+
+  useEffect(() => {
+    const loadLocalPros = async () => {
+      if (!shouldShowLocalHelp || !user) return;
+
+      setLocalProsLoading(true);
+      setLocalProsError(null);
+
+      try {
+        // Request location permission
+        const { status } = await Location.requestForegroundPermissionsAsync();
+
+        if (status !== 'granted') {
+          setLocationDenied(true);
+          setLocalProsLoading(false);
+          return;
+        }
+
+        // Get current location
+        const location = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.Balanced,
+        });
+
+        const { latitude, longitude } = location.coords;
+
+        // Build query text from diagnosis
+        const queryText = `${diagnosis.diagnosis.summary} ${diagnosis.diagnosis.likelyCauses?.[0] || ''}`;
+
+        // Fetch local pros
+        const pros = await getLocalPros({
+          category,
+          queryText,
+          lat: latitude,
+          lng: longitude,
+        });
+
+        setLocalPros(pros);
+      } catch (error) {
+        console.error('Error loading local pros:', error);
+        setLocalProsError('Unable to find local professionals');
+      } finally {
+        setLocalProsLoading(false);
+      }
+    };
+
+    loadLocalPros();
+  }, [shouldShowLocalHelp, user, category, diagnosis]);
+
+  // Get detected item label for call script
+  const getDetectedItem = (): string | undefined => {
+    if (!isAdvanced && (diagnosis as FreeDiagnosis).detectedItem?.label) {
+      return (diagnosis as FreeDiagnosis).detectedItem?.label;
+    }
+    if (isAdvanced && 'detailedAnalysis' in diagnosis.diagnosis && diagnosis.diagnosis.productIdentification) {
+      return `${diagnosis.diagnosis.productIdentification.brand} ${diagnosis.diagnosis.productIdentification.model}`;
+    }
+    return undefined;
+  };
+
+  // Handle copying call script
+  const handleCopyCallScript = async () => {
+    const script = generateCallScript({
+      detectedItem: getDetectedItem(),
+      diagnosisSummary: diagnosis.diagnosis.summary,
+      likelyCause: diagnosis.diagnosis.likelyCauses?.[0],
+    });
+
+    await Clipboard.setStringAsync(script);
+    Alert.alert('Copied!', 'Call script copied to clipboard. Paste it when you call a pro.');
+  };
+
+  // Handle call action
+  const handleCallPro = (phone: string) => {
+    Linking.openURL(`tel:${phone}`);
+  };
+
+  // Handle directions action
+  const handleGetDirections = (mapsUrl: string) => {
+    Linking.openURL(mapsUrl);
+  };
+
+  // Handle fallback maps search
+  const handleFallbackMapsSearch = () => {
+    const url = buildMapsSearchUrl(category, diagnosis.diagnosis.summary);
+    Linking.openURL(url);
+  };
 
   const getCategoryEmoji = () => {
     const emojis: Record<string, string> = {
@@ -300,6 +400,14 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
           </View>
         </View>
 
+        {/* Detected Item (Free tier) - Show at top for visibility */}
+        {!isAdvanced && (diagnosis as FreeDiagnosis).detectedItem?.label && (
+          <View style={styles.detectedItemSection}>
+            <Text style={styles.detectedItemLabel}>🔍 Detected:</Text>
+            <Text style={styles.detectedItemText}>{(diagnosis as FreeDiagnosis).detectedItem?.label}</Text>
+          </View>
+        )}
+
         <Text style={styles.diagnosisText}>{diagnosis.diagnosis.summary}</Text>
 
         {/* Product Identification (Advanced only) */}
@@ -382,6 +490,138 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
           {diagnosis.nextSteps.map((step, index) => (
             <Text key={index} style={styles.nextStepText}>• {step}</Text>
           ))}
+        </View>
+      )}
+
+      {/* Local Help Section */}
+      {shouldShowLocalHelp && (
+        <View style={styles.localHelpCard}>
+          <Text style={styles.localHelpTitle}>📍 Local Help Near You</Text>
+
+          {/* Copy Call Script Button */}
+          <TouchableOpacity
+            style={styles.callScriptButton}
+            onPress={handleCopyCallScript}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.callScriptButtonText}>📋 Copy Call Script</Text>
+            <Text style={styles.callScriptHint}>Know what to say when you call</Text>
+          </TouchableOpacity>
+
+          {/* Loading State */}
+          {localProsLoading && (
+            <View style={styles.localHelpLoading}>
+              <ActivityIndicator size="small" color="#1E5AA8" />
+              <Text style={styles.localHelpLoadingText}>Finding professionals near you...</Text>
+            </View>
+          )}
+
+          {/* Location Denied Fallback */}
+          {locationDenied && !localProsLoading && (
+            <View style={styles.locationDeniedCard}>
+              <Text style={styles.locationDeniedText}>
+                Location access needed to find nearby pros
+              </Text>
+              <TouchableOpacity
+                style={styles.mapsSearchButton}
+                onPress={handleFallbackMapsSearch}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.mapsSearchButtonText}>🗺️ Search on Google Maps</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Error State */}
+          {localProsError && !localProsLoading && (
+            <View style={styles.localHelpError}>
+              <Text style={styles.localHelpErrorText}>{localProsError}</Text>
+              <TouchableOpacity
+                style={styles.mapsSearchButton}
+                onPress={handleFallbackMapsSearch}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.mapsSearchButtonText}>🗺️ Search on Google Maps</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Empty State */}
+          {!localProsLoading && !localProsError && !locationDenied && localPros.length === 0 && (
+            <View style={styles.localHelpEmpty}>
+              <Text style={styles.localHelpEmptyText}>No professionals found nearby</Text>
+              <TouchableOpacity
+                style={styles.mapsSearchButton}
+                onPress={handleFallbackMapsSearch}
+                activeOpacity={0.8}
+              >
+                <Text style={styles.mapsSearchButtonText}>🗺️ Search on Google Maps</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Local Pros List */}
+          {!localProsLoading && localPros.length > 0 && (
+            <View style={styles.localProsList}>
+              {localPros.map((pro) => (
+                <View key={pro.placeId} style={styles.localProCard}>
+                  <View style={styles.localProHeader}>
+                    <Text style={styles.localProName}>{pro.name}</Text>
+                    {pro.openNow !== undefined && (
+                      <View style={[
+                        styles.openBadge,
+                        { backgroundColor: pro.openNow ? '#10b981' : '#ef4444' }
+                      ]}>
+                        <Text style={styles.openBadgeText}>
+                          {pro.openNow ? 'Open' : 'Closed'}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+
+                  {/* Rating */}
+                  {pro.rating && (
+                    <View style={styles.ratingRow}>
+                      <Text style={styles.ratingStars}>
+                        {'★'.repeat(Math.round(pro.rating))}
+                        {'☆'.repeat(5 - Math.round(pro.rating))}
+                      </Text>
+                      <Text style={styles.ratingText}>
+                        {pro.rating.toFixed(1)} ({pro.userRatingsTotal || 0} reviews)
+                      </Text>
+                    </View>
+                  )}
+
+                  {/* Address */}
+                  {pro.address && (
+                    <Text style={styles.localProAddress}>{pro.address}</Text>
+                  )}
+
+                  {/* Action Buttons */}
+                  <View style={styles.localProActions}>
+                    {pro.phone && (
+                      <TouchableOpacity
+                        style={styles.callButton}
+                        onPress={() => handleCallPro(pro.phone!)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.callButtonText}>📞 Call</Text>
+                      </TouchableOpacity>
+                    )}
+                    {pro.mapsUrl && (
+                      <TouchableOpacity
+                        style={styles.directionsButton}
+                        onPress={() => handleGetDirections(pro.mapsUrl!)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={styles.directionsButtonText}>🗺️ Directions</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </View>
+              ))}
+            </View>
+          )}
         </View>
       )}
 
@@ -696,6 +936,28 @@ const styles = StyleSheet.create({
     color: '#1e293b',
     lineHeight: 24,
     marginBottom: 16,
+  },
+  detectedItemSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f0f9ff',
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 12,
+    borderLeftWidth: 3,
+    borderLeftColor: '#3b82f6',
+  },
+  detectedItemLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1E5AA8',
+    marginRight: 8,
+  },
+  detectedItemText: {
+    fontSize: 14,
+    color: '#1e293b',
+    fontWeight: '500',
+    flex: 1,
   },
   productIdSection: {
     marginTop: 12,
@@ -1272,5 +1534,175 @@ const styles = StyleSheet.create({
   registerLink: {
     color: '#1E5AA8',
     fontWeight: 'bold',
+  },
+  // Local Help styles
+  localHelpCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+    borderWidth: 2,
+    borderColor: '#10b981',
+  },
+  localHelpTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#166534',
+    marginBottom: 16,
+  },
+  callScriptButton: {
+    backgroundColor: '#f0fdf4',
+    borderRadius: 10,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#10b981',
+    alignItems: 'center',
+  },
+  callScriptButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#166534',
+  },
+  callScriptHint: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 4,
+  },
+  localHelpLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  localHelpLoadingText: {
+    marginLeft: 10,
+    fontSize: 14,
+    color: '#64748b',
+  },
+  locationDeniedCard: {
+    backgroundColor: '#fef3c7',
+    borderRadius: 10,
+    padding: 16,
+    alignItems: 'center',
+  },
+  locationDeniedText: {
+    fontSize: 14,
+    color: '#92400e',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  mapsSearchButton: {
+    backgroundColor: '#1E5AA8',
+    borderRadius: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+  },
+  mapsSearchButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  localHelpError: {
+    backgroundColor: '#fee2e2',
+    borderRadius: 10,
+    padding: 16,
+    alignItems: 'center',
+  },
+  localHelpErrorText: {
+    fontSize: 14,
+    color: '#991b1b',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  localHelpEmpty: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 10,
+    padding: 16,
+    alignItems: 'center',
+  },
+  localHelpEmptyText: {
+    fontSize: 14,
+    color: '#64748b',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  localProsList: {
+    gap: 12,
+  },
+  localProCard: {
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    padding: 16,
+  },
+  localProHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+  },
+  localProName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1e293b',
+    flex: 1,
+    marginRight: 8,
+  },
+  openBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 4,
+  },
+  openBadgeText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  ratingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  ratingStars: {
+    fontSize: 14,
+    color: '#f59e0b',
+    marginRight: 6,
+  },
+  ratingText: {
+    fontSize: 13,
+    color: '#64748b',
+  },
+  localProAddress: {
+    fontSize: 13,
+    color: '#64748b',
+    marginBottom: 12,
+  },
+  localProActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  callButton: {
+    flex: 1,
+    backgroundColor: '#10b981',
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  callButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  directionsButton: {
+    flex: 1,
+    backgroundColor: '#1E5AA8',
+    borderRadius: 8,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  directionsButtonText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

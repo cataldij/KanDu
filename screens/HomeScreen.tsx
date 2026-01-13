@@ -1,15 +1,24 @@
-import { useState, useLayoutEffect } from 'react';
+import { useState, useLayoutEffect, useEffect, useCallback } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import ProfileMenu from '../components/ProfileMenu';
+import { SavedDiagnosis, getDueFollowUp, getCategoryInfo } from '../services/diagnosisStorage';
 
 type RootStackParamList = {
   Home: undefined;
   Diagnosis: { category: string };
-  Results: undefined;
+  Results: {
+    diagnosis: string;
+    category: string;
+    description: string;
+    imageUri?: string;
+    videoUri?: string;
+    fromHistory?: boolean;
+  };
   DiagnosisHistory: undefined;
   Auth: { mode?: 'login' | 'signup' };
 };
@@ -21,6 +30,35 @@ type HomeScreenProps = {
 export default function HomeScreen({ navigation }: HomeScreenProps) {
   const { user } = useAuth();
   const [menuVisible, setMenuVisible] = useState(false);
+  const [dueFollowUp, setDueFollowUp] = useState<SavedDiagnosis | null>(null);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+
+  // Load due follow-up when screen focuses
+  useFocusEffect(
+    useCallback(() => {
+      const loadFollowUp = async () => {
+        if (user) {
+          const { data } = await getDueFollowUp(user.id);
+          setDueFollowUp(data);
+          setBannerDismissed(false);
+        } else {
+          setDueFollowUp(null);
+        }
+      };
+      loadFollowUp();
+    }, [user])
+  );
+
+  const handleFollowUpPress = () => {
+    if (dueFollowUp) {
+      navigation.navigate('Results', {
+        diagnosis: JSON.stringify(dueFollowUp.diagnosis_data),
+        category: dueFollowUp.category,
+        description: dueFollowUp.description,
+        fromHistory: true,
+      });
+    }
+  };
 
   // Always set headerBackTitle to KanDu™ immediately on mount
   useLayoutEffect(() => {
@@ -81,6 +119,37 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
         onClose={() => setMenuVisible(false)}
         onNavigateToHistory={() => navigation.navigate('DiagnosisHistory')}
       />
+
+      {/* Follow-up Banner */}
+      {user && dueFollowUp && !bannerDismissed && (
+        <View style={styles.followUpBanner}>
+          <View style={styles.followUpContent}>
+            <Text style={styles.followUpEmoji}>
+              {getCategoryInfo(dueFollowUp.category).emoji}
+            </Text>
+            <View style={styles.followUpText}>
+              <Text style={styles.followUpTitle}>Any updates?</Text>
+              <Text style={styles.followUpSummary} numberOfLines={1}>
+                {dueFollowUp.diagnosis_data.diagnosis.summary}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.followUpActions}>
+            <TouchableOpacity
+              style={styles.followUpButton}
+              onPress={handleFollowUpPress}
+            >
+              <Text style={styles.followUpButtonText}>Update</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.followUpDismiss}
+              onPress={() => setBannerDismissed(true)}
+            >
+              <Ionicons name="close" size={20} color="#64748b" />
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
 
       {/* Logo Section */}
       <View style={styles.logoSection}>
@@ -285,5 +354,63 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.85)',
     fontSize: 13,
     marginTop: 2,
+  },
+  followUpBanner: {
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 2,
+    borderColor: '#f59e0b',
+    shadowColor: '#f59e0b',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 3,
+    width: '100%',
+  },
+  followUpContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  followUpEmoji: {
+    fontSize: 28,
+    marginRight: 12,
+  },
+  followUpText: {
+    flex: 1,
+  },
+  followUpTitle: {
+    fontSize: 15,
+    fontWeight: 'bold',
+    color: '#92400e',
+    marginBottom: 2,
+  },
+  followUpSummary: {
+    fontSize: 13,
+    color: '#78350f',
+  },
+  followUpActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  followUpButton: {
+    backgroundColor: '#f59e0b',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  followUpButtonText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  followUpDismiss: {
+    padding: 4,
   },
 });

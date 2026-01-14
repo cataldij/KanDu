@@ -8,6 +8,8 @@ import DiagnosisScreen from './screens/DiagnosisScreen';
 import ResultsScreen from './screens/ResultsScreen';
 import AuthScreen from './screens/AuthScreen';
 import DiagnosisHistoryScreen from './screens/DiagnosisHistoryScreen';
+import GuidedFixDisclaimerScreen from './screens/GuidedFixDisclaimerScreen';
+import GuidedFixScreen from './screens/GuidedFixScreen';
 
 export type RootStackParamList = {
   Home: undefined;
@@ -22,6 +24,16 @@ export type RootStackParamList = {
   };
   Auth: { mode?: 'login' | 'signup' };
   DiagnosisHistory: undefined;
+  GuidedFixDisclaimer: {
+    category: string;
+    diagnosisSummary: string;
+    likelyCause?: string;
+  };
+  GuidedFix: {
+    category: string;
+    diagnosisSummary: string;
+    likelyCause?: string;
+  };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -78,6 +90,19 @@ function AppNavigator() {
         name="DiagnosisHistory"
         component={DiagnosisHistoryScreen}
         options={{ title: 'My Diagnoses' }}
+      />
+      <Stack.Screen
+        name="GuidedFixDisclaimer"
+        component={GuidedFixDisclaimerScreen}
+        options={{ title: 'Live Guidance', presentation: 'modal' }}
+      />
+      <Stack.Screen
+        name="GuidedFix"
+        component={GuidedFixScreen}
+        options={{
+          title: 'Guided Fix',
+          headerShown: false,
+        }}
       />
     </Stack.Navigator>
   );

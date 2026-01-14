@@ -19,7 +19,14 @@
       "Bash(npx eas update:list:*)",
       "Bash(npx eas build:*)",
       "Bash(npx expo start --clear --port 8081)",
-      "Bash(npx eas build:list:*)"
+      "Bash(npx eas build:list:*)",
+      "Bash(eas build:*)",
+      "Bash(npx expo start:*)",
+      "Bash(eas build:list:*)",
+      "Bash(timeout /t 5 /nobreak)",
+      "Bash(powershell -Command:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
     ]
   }
 }

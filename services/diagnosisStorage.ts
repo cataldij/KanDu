@@ -22,6 +22,8 @@ export interface DiagnosisUpdate {
   resolution_note?: string | null;
   resolved_at?: string | null;
   follow_up_at?: string | null;
+  diagnosis_data?: FreeDiagnosis | AdvancedDiagnosis;
+  is_advanced?: boolean;
 }
 
 export async function saveDiagnosis(
@@ -172,8 +174,11 @@ export function getCategoryInfo(category: string): { name: string; emoji: string
 export function formatDiagnosisDate(dateString: string): string {
   const date = new Date(dateString);
   const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  // Compare calendar dates (not time-based diff)
+  const dateOnly = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const nowOnly = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const diffDays = Math.round((nowOnly.getTime() - dateOnly.getTime()) / (1000 * 60 * 60 * 24));
 
   if (diffDays === 0) {
     return 'Today';

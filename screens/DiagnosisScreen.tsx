@@ -92,7 +92,7 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true,
         quality: 0.8,
       });
@@ -103,7 +103,7 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
       }
     } catch (error: any) {
       console.error('Error picking image:', error);
-      Alert.alert('Error', `Failed to open gallery: ${error.message || 'Unknown error'}`);
+      Alert.alert('Error', `Failed to open gallery. Please check photo permissions in Settings.`);
     }
   };
 
@@ -117,7 +117,7 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
       }
 
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
         allowsEditing: true,
         quality: 0.8,
       });
@@ -128,7 +128,7 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
       }
     } catch (error) {
       console.error('Error taking photo:', error);
-      Alert.alert('Error', 'Failed to open camera. Please try again.');
+      Alert.alert('Error', 'Failed to open camera. Please check camera permissions in Settings.');
     }
   };
 
@@ -142,18 +142,29 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
       }
 
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+        mediaTypes: ['videos'],
         allowsEditing: false,
         quality: 0.8,
+        legacy: true, // Use legacy picker to avoid iOS 3164 error
+        presentationStyle: ImagePicker.UIImagePickerPresentationStyle.FULL_SCREEN,
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
         setVideo(result.assets[0].uri);
         setImage(null);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error picking video:', error);
-      Alert.alert('Error', 'Failed to open gallery. Please try again.');
+      // Check for specific iOS error
+      if (error?.message?.includes('3164')) {
+        Alert.alert(
+          'Video Access Issue',
+          'iOS is having trouble accessing your videos. Try:\n\n1. Record a new video using the camera option instead\n2. Or restart the app and try again',
+          [{ text: 'OK' }]
+        );
+      } else {
+        Alert.alert('Error', 'Failed to open gallery. Please try again.');
+      }
     }
   };
 
@@ -167,7 +178,7 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
       }
 
       const result = await ImagePicker.launchCameraAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+        mediaTypes: ['videos'],
         allowsEditing: false,
         quality: 0.8,
       });

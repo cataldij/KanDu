@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { WebView } from 'react-native-webview';
+import { Ionicons } from '@expo/vector-icons';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import * as Location from 'expo-location';
@@ -21,7 +22,7 @@ import * as Clipboard from 'expo-clipboard';
 import { FreeDiagnosis, AdvancedDiagnosis, getAdvancedDiagnosis } from '../services/gemini';
 import { generatePrimaryLink, getLinksForCategory, AffiliateLink } from '../services/affiliate';
 import { useAuth } from '../contexts/AuthContext';
-import { saveDiagnosis } from '../services/diagnosisStorage';
+import { saveDiagnosis, updateDiagnosis } from '../services/diagnosisStorage';
 import { LocalPro, getLocalPros, generateCallScript, buildMapsSearchUrl } from '../services/localPros';
 
 const { width: screenWidth } = Dimensions.get('window');
@@ -38,6 +39,16 @@ type RootStackParamList = {
     fromHistory?: boolean;
   };
   Auth: undefined;
+  GuidedFixDisclaimer: {
+    category: string;
+    diagnosisSummary: string;
+    likelyCause?: string;
+  };
+  GuidedFix: {
+    category: string;
+    diagnosisSummary: string;
+    likelyCause?: string;
+  };
 };
 
 type ResultsScreenProps = {
@@ -66,13 +77,14 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
 
   const { user } = useAuth();
   const hasSavedRef = useRef(false);
+  const savedDiagnosisIdRef = useRef<string | null>(null);
 
   // Save diagnosis to history when user is logged in (skip if viewing from history)
   useEffect(() => {
     const saveToHistory = async () => {
       if (user && !hasSavedRef.current && !fromHistory) {
         hasSavedRef.current = true;
-        const { error } = await saveDiagnosis(
+        const { error, data } = await saveDiagnosis(
           user.id,
           category,
           description,
@@ -81,11 +93,30 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
         );
         if (error) {
           console.log('Failed to save diagnosis to history:', error.message);
+        } else if (data) {
+          // Store the saved diagnosis ID so we can update it if user upgrades
+          savedDiagnosisIdRef.current = data.id;
         }
       }
     };
     saveToHistory();
   }, [user, category, description, diagnosis, isAdvanced, fromHistory]);
+
+  // Update saved diagnosis when user upgrades to advanced
+  useEffect(() => {
+    const updateSavedDiagnosis = async () => {
+      if (isAdvanced && savedDiagnosisIdRef.current && user) {
+        const { error } = await updateDiagnosis(savedDiagnosisIdRef.current, {
+          diagnosis_data: diagnosis,
+          is_advanced: true,
+        });
+        if (error) {
+          console.log('Failed to update diagnosis to advanced:', error.message);
+        }
+      }
+    };
+    updateSavedDiagnosis();
+  }, [isAdvanced, diagnosis, user]);
 
   // Always show local help section - users can decide if they want to use it
   const shouldShowLocalHelp = true;
@@ -629,6 +660,33 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
       {isAdvanced && 'stepByStep' in diagnosis && diagnosis.stepByStep && (
         <View style={styles.advancedCard}>
           <Text style={styles.advancedSectionTitle}>🛠️ Step-by-Step Repair Instructions</Text>
+
+          {/* Live Guidance CTA */}
+          <TouchableOpacity
+            onPress={() => navigation.navigate('GuidedFixDisclaimer', {
+              category,
+              diagnosisSummary: diagnosis.diagnosis.summary,
+              likelyCause: diagnosis.diagnosis.likelyCauses?.[0],
+            })}
+            activeOpacity={0.8}
+            style={styles.liveGuidanceButtonWrapper}
+          >
+            <LinearGradient
+              colors={['#10b981', '#059669']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.liveGuidanceButton}
+            >
+              <View style={styles.liveGuidanceContent}>
+                <Ionicons name="videocam" size={28} color="#ffffff" />
+                <View style={styles.liveGuidanceTextContainer}>
+                  <Text style={styles.liveGuidanceButtonText}>We KanDu this together</Text>
+                  <Text style={styles.liveGuidanceButtonSubtext}>I'll guide you step by step using your camera</Text>
+                </View>
+              </View>
+            </LinearGradient>
+          </TouchableOpacity>
+
           {diagnosis.stepByStep.map((step, index) => (
             <View key={index} style={styles.stepItem}>
               <Text style={styles.stepNumber}>{index + 1}</Text>
@@ -1704,5 +1762,37 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 14,
     fontWeight: '600',
+  },
+  // Live Guidance Button styles
+  liveGuidanceButtonWrapper: {
+    borderRadius: 16,
+    marginBottom: 20,
+    shadowColor: '#10b981',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 12,
+    elevation: 8,
+  },
+  liveGuidanceButton: {
+    borderRadius: 16,
+    padding: 18,
+  },
+  liveGuidanceContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  liveGuidanceTextContainer: {
+    flex: 1,
+  },
+  liveGuidanceButtonText: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  liveGuidanceButtonSubtext: {
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontSize: 14,
   },
 });

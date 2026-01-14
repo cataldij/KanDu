@@ -8,10 +8,28 @@ import {
   ActivityIndicator,
   Dimensions,
   Modal,
+  ScrollView,
+  Platform,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Speech from 'expo-speech';
 import * as Haptics from 'expo-haptics';
+
+// Voice settings interface
+interface VoiceSettings {
+  rate: number;
+  pitch: number;
+  voiceIdentifier?: string;
+  voiceName?: string;
+}
+
+// Available voice from expo-speech
+interface AvailableVoice {
+  identifier: string;
+  name: string;
+  quality: string;
+  language: string;
+}
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
@@ -81,6 +99,16 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
   const [stepStatus, setStepStatus] = useState<StepStatus>('IN_PROGRESS');
   const [showOverrideModal, setShowOverrideModal] = useState(false);
 
+  // Voice Settings State
+  const [showVoiceModal, setShowVoiceModal] = useState(false);
+  const [availableVoices, setAvailableVoices] = useState<AvailableVoice[]>([]);
+  const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>({
+    rate: 0.9,
+    pitch: 1.0,
+    voiceIdentifier: undefined,
+    voiceName: 'Default',
+  });
+
   // Tracking refs
   const cameraRef = useRef<CameraView>(null);
   const frameIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -94,9 +122,37 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
   const MISMATCH_THRESHOLD = 2; // 2 consecutive mismatches = hard block
   const CONFIRMATION_WINDOW_SIZE = 3; // 2-of-3 rule
 
-  // Load repair plan on mount
+  // Load available voices on mount
+  useEffect(() => {
+    const loadVoices = async () => {
+      try {
+        const voices = await Speech.getAvailableVoicesAsync();
+        // Filter to English voices and sort by quality
+        const englishVoices = voices
+          .filter((v: any) => v.language?.startsWith('en'))
+          .sort((a: any, b: any) => {
+            // Prioritize enhanced/premium quality voices
+            if (a.quality === 'Enhanced' && b.quality !== 'Enhanced') return -1;
+            if (b.quality === 'Enhanced' && a.quality !== 'Enhanced') return 1;
+            return a.name.localeCompare(b.name);
+          });
+        setAvailableVoices(englishVoices as AvailableVoice[]);
+      } catch (error) {
+        console.log('Could not load voices:', error);
+      }
+    };
+    loadVoices();
+  }, []);
+
+  // Load repair plan on mount, cleanup on unmount
   useEffect(() => {
     loadRepairPlan();
+
+    // Cleanup when component unmounts
+    return () => {
+      stopFrameCapture();
+      Speech.stop();
+    };
   }, []);
 
   // Start frame capture when plan is ready (including during VERIFYING phase)
@@ -285,13 +341,20 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
     Speech.stop();
     isSpeakingRef.current = false;
 
-    Speech.speak(text, {
+    const speechOptions: Speech.SpeechOptions = {
       language: 'en-US',
-      pitch: urgent ? 1.2 : 1.0,
-      rate: urgent ? 0.85 : 0.9,
+      pitch: urgent ? voiceSettings.pitch * 1.2 : voiceSettings.pitch,
+      rate: urgent ? voiceSettings.rate * 0.95 : voiceSettings.rate,
       onStart: () => { isSpeakingRef.current = true; },
       onDone: () => { isSpeakingRef.current = false; },
-    });
+    };
+
+    // Add voice identifier if selected (note: may not work on all platforms)
+    if (voiceSettings.voiceIdentifier) {
+      speechOptions.voice = voiceSettings.voiceIdentifier;
+    }
+
+    Speech.speak(text, speechOptions);
   };
 
   // === IDENTITY MODAL HANDLERS ===
@@ -382,17 +445,27 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
       speakGuidance(`Step ${nextIndex + 1}: ${nextInstruction}`);
       lastGuidanceTimeRef.current = Date.now();
     } else {
-      // All steps complete
+      // All steps complete - clean up first
       stopFrameCapture();
+      Speech.stop();
       setSessionActive(false);
-      speakGuidance('All steps complete! Great job!');
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
       Alert.alert(
         'Repair Complete!',
         "You've finished all the steps. Test your repair to make sure it works.",
         [
-          { text: 'Mark as Fixed', onPress: () => navigation.navigate('Home') },
-          { text: 'Need More Help', onPress: () => navigation.goBack() },
-        ]
+          {
+            text: 'Mark as Fixed',
+            onPress: () => navigation.navigate('Home'),
+          },
+          {
+            text: 'Need More Help',
+            onPress: () => navigation.goBack(),
+          },
+        ],
+        { cancelable: false } // Prevent dismissing by tapping outside
       );
     }
   };
@@ -438,6 +511,58 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
 
   const toggleFlash = () => {
     setFlashEnabled(!flashEnabled);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  const openVoiceSettings = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setShowVoiceModal(true);
+  };
+
+  const previewVoice = () => {
+    Speech.stop();
+    const previewText = "This is how I'll sound during your repair.";
+    const speechOptions: Speech.SpeechOptions = {
+      language: 'en-US',
+      pitch: voiceSettings.pitch,
+      rate: voiceSettings.rate,
+    };
+    if (voiceSettings.voiceIdentifier) {
+      speechOptions.voice = voiceSettings.voiceIdentifier;
+    }
+    Speech.speak(previewText, speechOptions);
+  };
+
+  const selectVoice = (voice: AvailableVoice | null) => {
+    if (voice) {
+      setVoiceSettings(prev => ({
+        ...prev,
+        voiceIdentifier: voice.identifier,
+        voiceName: voice.name,
+      }));
+    } else {
+      setVoiceSettings(prev => ({
+        ...prev,
+        voiceIdentifier: undefined,
+        voiceName: 'Default',
+      }));
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  const adjustRate = (delta: number) => {
+    setVoiceSettings(prev => ({
+      ...prev,
+      rate: Math.max(0.5, Math.min(1.5, prev.rate + delta)),
+    }));
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  const adjustPitch = (delta: number) => {
+    setVoiceSettings(prev => ({
+      ...prev,
+      pitch: Math.max(0.5, Math.min(2.0, prev.pitch + delta)),
+    }));
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
@@ -599,6 +724,105 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
         </View>
       </Modal>
 
+      {/* Voice Settings Modal */}
+      <Modal visible={showVoiceModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.voiceModal}>
+            <View style={styles.voiceModalHeader}>
+              <Text style={styles.voiceModalTitle}>Voice Settings</Text>
+              <TouchableOpacity onPress={() => setShowVoiceModal(false)}>
+                <Ionicons name="close" size={28} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Speed Control */}
+            <View style={styles.voiceSettingRow}>
+              <Text style={styles.voiceSettingLabel}>Speed</Text>
+              <View style={styles.voiceSettingControls}>
+                <TouchableOpacity style={styles.voiceAdjustButton} onPress={() => adjustRate(-0.1)}>
+                  <Ionicons name="remove" size={24} color="#1E5AA8" />
+                </TouchableOpacity>
+                <Text style={styles.voiceSettingValue}>{voiceSettings.rate.toFixed(1)}x</Text>
+                <TouchableOpacity style={styles.voiceAdjustButton} onPress={() => adjustRate(0.1)}>
+                  <Ionicons name="add" size={24} color="#1E5AA8" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Pitch Control */}
+            <View style={styles.voiceSettingRow}>
+              <Text style={styles.voiceSettingLabel}>Pitch</Text>
+              <View style={styles.voiceSettingControls}>
+                <TouchableOpacity style={styles.voiceAdjustButton} onPress={() => adjustPitch(-0.1)}>
+                  <Ionicons name="remove" size={24} color="#1E5AA8" />
+                </TouchableOpacity>
+                <Text style={styles.voiceSettingValue}>{voiceSettings.pitch.toFixed(1)}</Text>
+                <TouchableOpacity style={styles.voiceAdjustButton} onPress={() => adjustPitch(0.1)}>
+                  <Ionicons name="add" size={24} color="#1E5AA8" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            {/* Voice Selection */}
+            <Text style={styles.voiceSectionTitle}>Voice</Text>
+            <ScrollView style={styles.voiceList} showsVerticalScrollIndicator={false}>
+              {/* Default Voice Option */}
+              <TouchableOpacity
+                style={[
+                  styles.voiceOption,
+                  !voiceSettings.voiceIdentifier && styles.voiceOptionSelected,
+                ]}
+                onPress={() => selectVoice(null)}
+              >
+                <View style={styles.voiceOptionInfo}>
+                  <Text style={styles.voiceOptionName}>Default</Text>
+                  <Text style={styles.voiceOptionQuality}>System default voice</Text>
+                </View>
+                {!voiceSettings.voiceIdentifier && (
+                  <Ionicons name="checkmark-circle" size={24} color="#10b981" />
+                )}
+              </TouchableOpacity>
+
+              {/* Available Voices */}
+              {availableVoices.map((voice) => (
+                <TouchableOpacity
+                  key={voice.identifier}
+                  style={[
+                    styles.voiceOption,
+                    voiceSettings.voiceIdentifier === voice.identifier && styles.voiceOptionSelected,
+                  ]}
+                  onPress={() => selectVoice(voice)}
+                >
+                  <View style={styles.voiceOptionInfo}>
+                    <Text style={styles.voiceOptionName}>{voice.name}</Text>
+                    <Text style={styles.voiceOptionQuality}>
+                      {voice.quality === 'Enhanced' ? 'Enhanced quality' : 'Standard'}
+                    </Text>
+                  </View>
+                  {voiceSettings.voiceIdentifier === voice.identifier && (
+                    <Ionicons name="checkmark-circle" size={24} color="#10b981" />
+                  )}
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {/* Preview Button */}
+            <TouchableOpacity style={styles.voicePreviewButton} onPress={previewVoice}>
+              <Ionicons name="play" size={20} color="#ffffff" />
+              <Text style={styles.voicePreviewButtonText}>Preview Voice</Text>
+            </TouchableOpacity>
+
+            {/* Done Button */}
+            <TouchableOpacity
+              style={styles.voiceDoneButton}
+              onPress={() => setShowVoiceModal(false)}
+            >
+              <Text style={styles.voiceDoneButtonText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {/* Camera View - No children to avoid warning */}
       <CameraView
         ref={cameraRef}
@@ -624,8 +848,20 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
               <Ionicons name={flashEnabled ? 'flash' : 'flash-off'} size={24} color="#ffffff" />
             </TouchableOpacity>
 
-            <TouchableOpacity style={styles.controlToggle} onPress={toggleVoice}>
+            <TouchableOpacity
+              style={styles.controlToggle}
+              onPress={toggleVoice}
+              onLongPress={openVoiceSettings}
+              delayLongPress={500}
+            >
               <Ionicons name={voiceEnabled ? 'volume-high' : 'volume-mute'} size={24} color="#ffffff" />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.controlToggleSmall}
+              onPress={openVoiceSettings}
+            >
+              <Ionicons name="settings-outline" size={20} color="#ffffff" />
             </TouchableOpacity>
           </View>
         </View>
@@ -1131,5 +1367,131 @@ const styles = StyleSheet.create({
     color: '#1e293b',
     fontSize: 16,
     fontWeight: '600',
+  },
+  // Small control toggle for settings icon
+  controlToggleSmall: {
+    backgroundColor: 'rgba(30, 90, 168, 0.7)',
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // Voice Settings Modal styles
+  voiceModal: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 20,
+    width: '100%',
+    maxWidth: 360,
+    maxHeight: '80%',
+  },
+  voiceModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  voiceModalTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1e293b',
+  },
+  voiceSettingRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f1f5f9',
+  },
+  voiceSettingLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1e293b',
+  },
+  voiceSettingControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  voiceAdjustButton: {
+    backgroundColor: '#f1f5f9',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  voiceSettingValue: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1E5AA8',
+    minWidth: 50,
+    textAlign: 'center',
+  },
+  voiceSectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1e293b',
+    marginTop: 16,
+    marginBottom: 12,
+  },
+  voiceList: {
+    maxHeight: 200,
+    marginBottom: 16,
+  },
+  voiceOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    borderRadius: 10,
+    marginBottom: 4,
+  },
+  voiceOptionSelected: {
+    backgroundColor: '#f0fdf4',
+  },
+  voiceOptionInfo: {
+    flex: 1,
+  },
+  voiceOptionName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1e293b',
+  },
+  voiceOptionQuality: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 2,
+  },
+  voicePreviewButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1E5AA8',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    gap: 8,
+    marginBottom: 10,
+  },
+  voicePreviewButtonText: {
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  voiceDoneButton: {
+    backgroundColor: '#10b981',
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  voiceDoneButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 });

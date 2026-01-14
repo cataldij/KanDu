@@ -9,16 +9,77 @@ if (!API_KEY) {
 
 const genAI = new GoogleGenerativeAI(API_KEY);
 
+// Maximum file size for inline data (15MB to be safe, Gemini limit is ~20MB)
+const MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024;
+
+/**
+ * Retry wrapper for Gemini API calls with exponential backoff
+ */
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries: number = 2,
+  baseDelayMs: number = 1000
+): Promise<T> {
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+
+      // Check if it's a retryable error (500, 503, rate limit)
+      const errorMessage = lastError.message.toLowerCase();
+      const isRetryable =
+        errorMessage.includes('500') ||
+        errorMessage.includes('503') ||
+        errorMessage.includes('internal error') ||
+        errorMessage.includes('rate limit') ||
+        errorMessage.includes('overloaded');
+
+      if (!isRetryable || attempt === maxRetries) {
+        throw lastError;
+      }
+
+      // Exponential backoff
+      const delayMs = baseDelayMs * Math.pow(2, attempt);
+      console.log(`Gemini API error, retrying in ${delayMs}ms (attempt ${attempt + 1}/${maxRetries})...`);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+
+  throw lastError;
+}
+
 /**
  * Convert local file URI to base64 for Gemini API
  */
 async function fileToGenerativePart(uri: string, mimeType: string) {
   try {
     console.log('Reading file:', uri);
+
+    // Check file size first
+    const fileInfo = await FileSystem.getInfoAsync(uri);
+    if (fileInfo.exists && 'size' in fileInfo && fileInfo.size) {
+      console.log('File size:', fileInfo.size, 'bytes', `(${(fileInfo.size / 1024 / 1024).toFixed(2)} MB)`);
+
+      if (fileInfo.size > MAX_FILE_SIZE_BYTES) {
+        const sizeMB = (fileInfo.size / 1024 / 1024).toFixed(1);
+        throw new Error(`File too large (${sizeMB}MB). Please use a shorter video (under 30 seconds) or take a photo instead.`);
+      }
+    }
+
     const base64 = await FileSystem.readAsStringAsync(uri, {
       encoding: 'base64',
     });
     console.log('File read successfully, base64 length:', base64.length);
+
+    // Double-check base64 size (base64 is ~33% larger than original)
+    const base64SizeBytes = base64.length * 0.75; // Approximate original size
+    if (base64SizeBytes > MAX_FILE_SIZE_BYTES) {
+      throw new Error('File too large for analysis. Please use a shorter video (under 30 seconds) or take a photo instead.');
+    }
+
     return {
       inlineData: {
         data: base64,
@@ -27,6 +88,9 @@ async function fileToGenerativePart(uri: string, mimeType: string) {
     };
   } catch (error) {
     console.error('Error reading file:', error);
+    if (error instanceof Error && error.message.includes('too large')) {
+      throw error; // Re-throw size errors with helpful message
+    }
     throw new Error(`Failed to read ${mimeType} file: ${error instanceof Error ? error.message : 'Unknown error'}`);
   }
 }
@@ -197,7 +261,11 @@ IMPORTANT:
       contentParts.push(videoPart);
     }
 
-    const result = await model.generateContent(contentParts);
+    // Use retry wrapper for transient errors
+    const result = await withRetry(async () => {
+      return await model.generateContent(contentParts);
+    });
+
     const response = await result.response;
     const text = response.text();
 
@@ -211,6 +279,15 @@ IMPORTANT:
     return diagnosis;
   } catch (error) {
     console.error('Error getting free diagnosis:', error);
+    // Provide more helpful error messages
+    if (error instanceof Error) {
+      if (error.message.includes('too large')) {
+        throw error; // Pass through file size errors
+      }
+      if (error.message.includes('500') || error.message.includes('Internal error')) {
+        throw new Error('The AI service is temporarily unavailable. Please try again in a moment, or use a shorter video/photo.');
+      }
+    }
     throw new Error('Failed to analyze the problem. Please try again.');
   }
 }
@@ -344,7 +421,12 @@ CRITICAL REQUIREMENTS FOR PRODUCT RECOMMENDATIONS:
     }
 
     console.log('Calling Gemini API for advanced diagnosis...');
-    const result = await model.generateContent(contentParts);
+
+    // Use retry wrapper for transient errors
+    const result = await withRetry(async () => {
+      return await model.generateContent(contentParts);
+    });
+
     console.log('Gemini API responded');
 
     const response = await result.response;

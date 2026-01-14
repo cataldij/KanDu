@@ -37,6 +37,7 @@ type RootStackParamList = {
     imageUri?: string;
     videoUri?: string;
     fromHistory?: boolean;
+    isAdvanced?: boolean;
   };
   Auth: undefined;
   GuidedFixDisclaimer: {
@@ -57,12 +58,12 @@ type ResultsScreenProps = {
 };
 
 export default function ResultsScreen({ navigation, route }: ResultsScreenProps) {
-  const { diagnosis: diagnosisString, category, description, imageUri, videoUri, fromHistory } = route.params;
+  const { diagnosis: diagnosisString, category, description, imageUri, videoUri, fromHistory, isAdvanced: initialIsAdvanced } = route.params;
   const parsedDiagnosis = JSON.parse(diagnosisString);
   console.log('ResultsScreen - detectedItem:', JSON.stringify(parsedDiagnosis.detectedItem));
   const [diagnosis, setDiagnosis] = useState<FreeDiagnosis | AdvancedDiagnosis>(parsedDiagnosis);
   const [isUpgrading, setIsUpgrading] = useState(false);
-  const [isAdvanced, setIsAdvanced] = useState(false);
+  const [isAdvanced, setIsAdvanced] = useState(initialIsAdvanced || false);
   const [videoModalVisible, setVideoModalVisible] = useState(false);
   const [currentVideoQuery, setCurrentVideoQuery] = useState('');
   const [shopModalVisible, setShopModalVisible] = useState(false);

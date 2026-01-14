@@ -168,7 +168,7 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
     }
   };
 
-  const recordVideo = async () => {
+  const recordVideo = async (quality: number = 0.5) => {
     try {
       const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
 
@@ -180,7 +180,8 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['videos'],
         allowsEditing: false,
-        quality: 0.8,
+        quality: quality,
+        videoMaxDuration: 30, // Limit to 30 seconds to keep file size manageable
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
@@ -191,6 +192,27 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
       console.error('Error recording video:', error);
       Alert.alert('Error', 'Failed to open camera. Please try again.');
     }
+  };
+
+  const showVideoQualityOptions = () => {
+    Alert.alert(
+      'Video Quality',
+      'Lower quality = faster upload & more reliable analysis.\n\nKeep videos under 30 seconds for best results.',
+      [
+        {
+          text: 'Standard (Recommended)',
+          onPress: () => recordVideo(0.3),
+        },
+        {
+          text: 'High Quality',
+          onPress: () => recordVideo(0.7),
+        },
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+      ]
+    );
   };
 
   const analyzeProblem = async () => {
@@ -423,7 +445,15 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
 
               <TouchableOpacity
                 style={styles.sheetOption}
-                onPress={() => handleMediaOption(recordVideo)}
+                onPress={() => {
+                  setShowMediaSheet(false);
+                  // Show quality options after modal closes
+                  InteractionManager.runAfterInteractions(() => {
+                    setTimeout(() => {
+                      showVideoQualityOptions();
+                    }, 100);
+                  });
+                }}
                 activeOpacity={0.7}
               >
                 <LinearGradient

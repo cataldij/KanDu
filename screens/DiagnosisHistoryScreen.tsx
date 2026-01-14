@@ -34,6 +34,7 @@ type RootStackParamList = {
     imageUri?: string;
     videoUri?: string;
     fromHistory?: boolean;
+    isAdvanced?: boolean;
   };
 };
 
@@ -78,6 +79,7 @@ export default function DiagnosisHistoryScreen({ navigation }: DiagnosisHistoryS
       category: diagnosis.category,
       description: diagnosis.description,
       fromHistory: true,
+      isAdvanced: diagnosis.is_advanced,
     });
   };
 

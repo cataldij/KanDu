@@ -54,13 +54,16 @@ function AppNavigator() {
       initialRouteName="Home"
       screenOptions={{
         headerStyle: {
-          backgroundColor: '#1E5AA8',
+          backgroundColor: '#0f4c81',
         },
-        headerTintColor: '#fff',
+        headerTintColor: '#ffffff',
         headerTitleStyle: {
-          fontWeight: 'bold',
-          fontSize: 24,
+          fontWeight: '700',
+          fontSize: 22,
+          letterSpacing: 0.5,
         },
+        headerShadowVisible: true,
+        headerBlurEffect: 'dark',
       }}
     >
       <Stack.Screen

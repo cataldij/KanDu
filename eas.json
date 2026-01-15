@@ -14,6 +14,9 @@
       "channel": "preview",
       "android": {
         "image": "latest"
+      },
+      "ios": {
+        "simulator": false
       }
     },
     "production": {
@@ -25,6 +28,13 @@
     }
   },
   "submit": {
-    "production": {}
+    "production": {},
+    "preview": {
+      "ios": {
+        "appleId": "jcataldi@gmail.com",
+        "ascAppId": "placeholder",
+        "appleTeamId": "YOUR_TEAM_ID"
+      }
+    }
   }
 }

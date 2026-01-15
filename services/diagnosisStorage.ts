@@ -157,6 +157,28 @@ export async function getDueFollowUp(
   }
 }
 
+export async function getAllDueFollowUps(
+  userId: string
+): Promise<{ data: SavedDiagnosis[]; error: Error | null }> {
+  try {
+    const now = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from('diagnoses')
+      .select('*')
+      .eq('user_id', userId)
+      .neq('status', 'resolved')
+      .lte('follow_up_at', now)
+      .order('follow_up_at', { ascending: true });
+
+    if (error) throw error;
+    return { data: (data as SavedDiagnosis[]) || [], error: null };
+  } catch (error) {
+    console.error('Error fetching due follow-ups:', error);
+    return { data: [], error: error as Error };
+  }
+}
+
 // Helper to get category display info
 export function getCategoryInfo(category: string): { name: string; emoji: string } {
   const categories: Record<string, { name: string; emoji: string }> = {

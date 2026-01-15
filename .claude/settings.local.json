@@ -27,7 +27,12 @@
       "Bash(powershell -Command:*)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
-      "Bash(eas update:*)"
+      "Bash(eas update:*)",
+      "Bash(npx eas-cli update --branch preview --message \"Fix drag performance and add drag mode toggle\")",
+      "Bash(npx eas-cli update:*)",
+      "Bash(eas update:list:*)",
+      "Bash(npx eas-cli:*)",
+      "Bash(npm info:*)"
     ]
   }
 }

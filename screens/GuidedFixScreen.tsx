@@ -15,6 +15,15 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Speech from 'expo-speech';
 import * as Haptics from 'expo-haptics';
 
+// Dynamic import for SpeechRecognition - may not be available on all builds
+let ExpoSpeechRecognitionModule: any = null;
+try {
+  const speechRecognition = require('expo-speech-recognition');
+  ExpoSpeechRecognitionModule = speechRecognition.ExpoSpeechRecognitionModule;
+} catch (error) {
+  console.log('expo-speech-recognition not available:', error);
+}
+
 // Voice settings interface
 interface VoiceSettings {
   rate: number;
@@ -109,6 +118,17 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
     voiceName: 'Default',
   });
 
+  // Text box opacity control
+  const [textBoxOpacity, setTextBoxOpacity] = useState(0.95);
+
+  // Voice Question State (Phase 1-3)
+  const [isListening, setIsListening] = useState(false);
+  const [voiceQuestion, setVoiceQuestion] = useState('');
+  const [voiceAnswer, setVoiceAnswer] = useState('');
+  const [showAnswer, setShowAnswer] = useState(false);
+  const [questionCooldown, setQuestionCooldown] = useState(false);
+  const [recognitionAvailable, setRecognitionAvailable] = useState(false);
+
   // Tracking refs
   const cameraRef = useRef<CameraView>(null);
   const frameIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -117,12 +137,15 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
   const consecutiveMismatchCount = useRef<number>(0);
   const stepConfirmationWindow = useRef<boolean[]>([]); // Last 3 frame results
   const verificationAttempts = useRef<number>(0);
+  const lastQuestionTime = useRef<number>(0);
+  const answerTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const MIN_GUIDANCE_INTERVAL = 3000;
+  const QUESTION_COOLDOWN = 5000; // 5 seconds between questions
   const MISMATCH_THRESHOLD = 2; // 2 consecutive mismatches = hard block
   const CONFIRMATION_WINDOW_SIZE = 3; // 2-of-3 rule
 
-  // Load available voices on mount
+  // Load available voices and check speech recognition on mount
   useEffect(() => {
     const loadVoices = async () => {
       try {
@@ -141,7 +164,26 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
         console.log('Could not load voices:', error);
       }
     };
+
+    const checkSpeechRecognition = async () => {
+      // Check if the module is even available (requires native build)
+      if (!ExpoSpeechRecognitionModule) {
+        console.log('Speech recognition module not available');
+        setRecognitionAvailable(false);
+        return;
+      }
+      try {
+        const { status } = await ExpoSpeechRecognitionModule.getPermissionsAsync();
+        // If we can check permissions, recognition is available on this platform
+        setRecognitionAvailable(true);
+      } catch (error) {
+        console.log('Speech recognition not available:', error);
+        setRecognitionAvailable(false);
+      }
+    };
+
     loadVoices();
+    checkSpeechRecognition();
   }, []);
 
   // Load repair plan on mount, cleanup on unmount
@@ -172,6 +214,20 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
     stepConfirmationWindow.current = [];
   }, [currentStepIndex]);
 
+  // Reset analyzing state when modal closes to ensure analysis can resume
+  useEffect(() => {
+    if (!showVoiceModal && !showIdentityModal && !showOverrideModal) {
+      // Clear any stuck analyzing state when modals close
+      setIsAnalyzing(false);
+    }
+
+    // Stop any preview voice when modal closes
+    if (!showVoiceModal) {
+      Speech.stop();
+      isSpeakingRef.current = false;
+    }
+  }, [showVoiceModal, showIdentityModal, showOverrideModal]);
+
   const loadRepairPlan = async () => {
     try {
       setIsLoadingPlan(true);
@@ -195,7 +251,7 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
   const startFrameCapture = () => {
     frameIntervalRef.current = setInterval(() => {
       captureAndAnalyzeFrame();
-    }, 3000);
+    }, 3500); // Slightly slower for easier following
   };
 
   const stopFrameCapture = () => {
@@ -208,6 +264,7 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
   const captureAndAnalyzeFrame = async () => {
     if (!cameraRef.current || isAnalyzing || !sessionActive) return;
     if (identityStatus === 'MISMATCH') return; // Don't analyze during mismatch state
+    if (showVoiceModal || showIdentityModal || showOverrideModal) return; // Don't analyze when modals are open
 
     try {
       setIsAnalyzing(true);
@@ -215,6 +272,7 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
       const photo = await cameraRef.current.takePictureAsync({
         base64: true,
         quality: 0.5,
+        mute: true,
       });
 
       if (!photo || !photo.base64) {
@@ -345,8 +403,18 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
       language: 'en-US',
       pitch: urgent ? voiceSettings.pitch * 1.2 : voiceSettings.pitch,
       rate: urgent ? voiceSettings.rate * 0.95 : voiceSettings.rate,
-      onStart: () => { isSpeakingRef.current = true; },
-      onDone: () => { isSpeakingRef.current = false; },
+      onStart: () => {
+        isSpeakingRef.current = true;
+        console.log('Speech started:', text.substring(0, 50));
+      },
+      onDone: () => {
+        isSpeakingRef.current = false;
+        console.log('Speech done');
+      },
+      onError: (error) => {
+        console.error('Speech error:', error);
+        isSpeakingRef.current = false;
+      },
     };
 
     // Add voice identifier if selected (note: may not work on all platforms)
@@ -354,6 +422,7 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
       speechOptions.voice = voiceSettings.voiceIdentifier;
     }
 
+    console.log('Attempting to speak:', text.substring(0, 50), 'Voice enabled:', voiceEnabled);
     Speech.speak(text, speechOptions);
   };
 
@@ -526,6 +595,15 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
       language: 'en-US',
       pitch: voiceSettings.pitch,
       rate: voiceSettings.rate,
+      onStart: () => {
+        console.log('Preview voice started');
+      },
+      onDone: () => {
+        console.log('Preview voice done');
+      },
+      onError: (error) => {
+        console.error('Preview voice error:', error);
+      },
     };
     if (voiceSettings.voiceIdentifier) {
       speechOptions.voice = voiceSettings.voiceIdentifier;
@@ -563,6 +641,297 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
       ...prev,
       pitch: Math.max(0.5, Math.min(2.0, prev.pitch + delta)),
     }));
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+
+  // Ref to store event listener subscriptions
+  const speechListenerRef = useRef<any>(null);
+
+  // Voice Question Functions (Phase 1-3)
+  const startListening = async () => {
+    // Check if speech recognition module is available
+    if (!ExpoSpeechRecognitionModule) {
+      Alert.alert('Not Available', 'Voice questions require a development build with speech recognition.');
+      return;
+    }
+
+    // Check cooldown (Phase 2: Rate limiting)
+    const now = Date.now();
+    if (now - lastQuestionTime.current < QUESTION_COOLDOWN) {
+      const remaining = Math.ceil((QUESTION_COOLDOWN - (now - lastQuestionTime.current)) / 1000);
+      Alert.alert('Please Wait', `You can ask another question in ${remaining} seconds.`);
+      return;
+    }
+
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      setIsListening(true);
+      setVoiceQuestion('');
+
+      // Stop frame capture while listening
+      stopFrameCapture();
+
+      // Request permission
+      const { status } = await ExpoSpeechRecognitionModule.requestPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Microphone access is required for voice questions.');
+        setIsListening(false);
+        startFrameCapture(); // Resume frame capture
+        return;
+      }
+
+      // Set up event listener for results before starting
+      // The module extends NativeModule, so we use addListener
+      speechListenerRef.current = ExpoSpeechRecognitionModule.addListener('result', (event: any) => {
+        if (event.results && event.results.length > 0) {
+          const transcript = event.results[0]?.transcript || '';
+
+          // Phase 3: Wake word detection
+          const lowerTranscript = transcript.toLowerCase();
+          if (lowerTranscript.includes('kandu')) {
+            // Extract question after wake word
+            const questionPart = transcript.substring(transcript.toLowerCase().indexOf('kandu') + 5).trim();
+            if (questionPart.length > 5) {
+              setVoiceQuestion(questionPart);
+            }
+          } else {
+            // Regular question without wake word
+            setVoiceQuestion(transcript);
+          }
+        }
+
+        if (event.isFinal) {
+          const finalText = event.results?.[0]?.transcript || '';
+          cleanupAndProcessResult(finalText);
+        }
+      });
+
+      // Also listen for errors
+      const errorListener = ExpoSpeechRecognitionModule.addListener('error', (event: any) => {
+        console.error('Speech recognition error event:', event);
+        cleanupListeners();
+        setIsListening(false);
+        if (event.error !== 'aborted') {
+          Alert.alert('Recognition Error', event.message || 'Speech recognition failed.');
+        }
+        // Resume frame capture on error
+        startFrameCapture();
+      });
+
+      // Store error listener for cleanup
+      const endListener = ExpoSpeechRecognitionModule.addListener('end', () => {
+        cleanupListeners();
+        setIsListening(false);
+      });
+
+      // Store all listeners for cleanup
+      speechListenerRef.current = {
+        result: speechListenerRef.current,
+        error: errorListener,
+        end: endListener,
+      };
+
+      // Start recognition
+      ExpoSpeechRecognitionModule.start({
+        lang: 'en-US',
+        interimResults: true,
+        maxAlternatives: 1,
+        continuous: false,
+      });
+
+    } catch (error) {
+      console.error('Speech recognition error:', error);
+      cleanupListeners();
+      Alert.alert('Error', 'Could not start voice recognition. Please try again.');
+      setIsListening(false);
+      startFrameCapture(); // Resume frame capture on error
+    }
+  };
+
+  const cleanupListeners = () => {
+    if (speechListenerRef.current) {
+      try {
+        if (speechListenerRef.current.result?.remove) {
+          speechListenerRef.current.result.remove();
+        }
+        if (speechListenerRef.current.error?.remove) {
+          speechListenerRef.current.error.remove();
+        }
+        if (speechListenerRef.current.end?.remove) {
+          speechListenerRef.current.end.remove();
+        }
+      } catch (e) {
+        console.log('Error cleaning up listeners:', e);
+      }
+      speechListenerRef.current = null;
+    }
+  };
+
+  const cleanupAndProcessResult = async (finalTranscript: string) => {
+    cleanupListeners();
+    setIsListening(false);
+
+    // Enforce maximum question length (Phase 2: Guardrails)
+    const trimmedQuestion = finalTranscript.trim().slice(0, 100);
+
+    if (trimmedQuestion.length > 5) {
+      setVoiceQuestion(trimmedQuestion);
+      await processVoiceQuestion(trimmedQuestion);
+    } else {
+      Alert.alert('No Question', 'Please speak your question clearly.');
+      // Resume frame capture if no valid question
+      startFrameCapture();
+    }
+  };
+
+  const stopListening = async (finalTranscript: string) => {
+    try {
+      if (ExpoSpeechRecognitionModule) {
+        ExpoSpeechRecognitionModule.stop();
+      }
+      cleanupAndProcessResult(finalTranscript);
+    } catch (error) {
+      console.error('Error stopping recognition:', error);
+      cleanupListeners();
+      setIsListening(false);
+    }
+  };
+
+  const processVoiceQuestion = async (question: string) => {
+    // Update rate limiting timestamp (Phase 2)
+    lastQuestionTime.current = Date.now();
+    setQuestionCooldown(true);
+    setTimeout(() => setQuestionCooldown(false), QUESTION_COOLDOWN);
+
+    try {
+      // Capture current frame for context
+      let currentFrame = '';
+      if (cameraRef.current) {
+        const photo = await cameraRef.current.takePictureAsync({
+          base64: true,
+          quality: 0.5,
+        });
+        if (photo?.base64) {
+          currentFrame = photo.base64;
+        }
+      }
+
+      // Get current step context
+      const currentStep = repairSteps[currentStepIndex];
+      const safetyState = identityStatus === 'CONFIRMED' ? 'SAFE' :
+                         identityStatus === 'MISMATCH' ? 'DANGER' : 'UNKNOWN';
+
+      // Call Gemini with strict guardrails
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${process.env.EXPO_PUBLIC_GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{
+              parts: [
+                {
+                  text: `You are a repair assistant helping with this step: "${currentStep.instruction}"
+
+The user is working on: ${category} - ${diagnosisSummary}
+Current safety state: ${safetyState}
+Expected item status: ${identityStatus}
+
+User asked: "${question}"
+
+STRICT RULES:
+- Answer ONLY about the current step
+- Do NOT suggest next steps or alternative repairs
+- Do NOT override safety warnings
+- Keep response under 30 words
+- If identity mismatch, say "Cannot confirm - wrong item detected"
+- If unsafe, say "Stop - safety risk detected"
+- Be helpful but brief
+
+Respond clearly in 1-2 sentences max.`
+                },
+                ...(currentFrame ? [{
+                  inlineData: {
+                    mimeType: 'image/jpeg',
+                    data: currentFrame
+                  }
+                }] : [])
+              ]
+            }],
+            generationConfig: {
+              temperature: 0.4,
+              maxOutputTokens: 100,
+            }
+          })
+        }
+      );
+
+      const result = await response.json();
+      const answer = result.candidates?.[0]?.content?.parts?.[0]?.text ||
+                    'Sorry, I could not process that question. Please try again.';
+
+      // Display and speak answer (Phase 1)
+      setVoiceAnswer(answer);
+      setShowAnswer(true);
+
+      // Speak answer using voice settings
+      if (voiceEnabled) {
+        const speechOptions: Speech.SpeechOptions = {
+          language: 'en-US',
+          pitch: voiceSettings.pitch,
+          rate: voiceSettings.rate,
+        };
+        if (voiceSettings.voiceIdentifier) {
+          speechOptions.voice = voiceSettings.voiceIdentifier;
+        }
+        Speech.speak(answer, speechOptions);
+      }
+
+      // Auto-dismiss after 10 seconds (Phase 2)
+      if (answerTimeoutRef.current) {
+        clearTimeout(answerTimeoutRef.current);
+      }
+      answerTimeoutRef.current = setTimeout(() => {
+        setShowAnswer(false);
+        setVoiceAnswer('');
+        // Resume frame capture after auto-dismiss
+        startFrameCapture();
+      }, 10000);
+
+    } catch (error) {
+      console.error('Error processing voice question:', error);
+      Alert.alert('Error', 'Could not process your question. Please try again.');
+      // Resume frame capture on error
+      startFrameCapture();
+    }
+  };
+
+  const dismissAnswer = () => {
+    if (answerTimeoutRef.current) {
+      clearTimeout(answerTimeoutRef.current);
+    }
+    setShowAnswer(false);
+    setVoiceAnswer('');
+    Speech.stop();
+    // Resume frame capture after dismissing answer
+    startFrameCapture();
+  };
+
+  const toggleDragMode = () => {
+    const newDragState = !isDraggable;
+    setIsDraggable(newDragState);
+
+    if (newDragState) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      speakGuidance('Drag mode activated. Tap the box again to deactivate.', false);
+    } else {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      speakGuidance('Drag mode deactivated', false);
+    }
+  };
+
+  const adjustOpacity = (delta: number) => {
+    setTextBoxOpacity(prev => Math.max(0.3, Math.min(1.0, prev + delta)));
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
@@ -763,6 +1132,20 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
               </View>
             </View>
 
+            {/* Text Box Opacity Control */}
+            <View style={styles.voiceSettingRow}>
+              <Text style={styles.voiceSettingLabel}>Text Box Opacity</Text>
+              <View style={styles.voiceSettingControls}>
+                <TouchableOpacity style={styles.voiceAdjustButton} onPress={() => adjustOpacity(-0.1)}>
+                  <Ionicons name="remove" size={24} color="#1E5AA8" />
+                </TouchableOpacity>
+                <Text style={styles.voiceSettingValue}>{Math.round(textBoxOpacity * 100)}%</Text>
+                <TouchableOpacity style={styles.voiceAdjustButton} onPress={() => adjustOpacity(0.1)}>
+                  <Ionicons name="add" size={24} color="#1E5AA8" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
             {/* Voice Selection */}
             <Text style={styles.voiceSectionTitle}>Voice</Text>
             <ScrollView style={styles.voiceList} showsVerticalScrollIndicator={false}>
@@ -811,6 +1194,16 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
               <Ionicons name="play" size={20} color="#ffffff" />
               <Text style={styles.voicePreviewButtonText}>Preview Voice</Text>
             </TouchableOpacity>
+
+            {/* Voice troubleshooting tip */}
+            {Platform.OS === 'ios' && (
+              <View style={styles.voiceTip}>
+                <Ionicons name="information-circle" size={16} color="#64748b" />
+                <Text style={styles.voiceTipText}>
+                  If you can't hear voice, turn off Silent Mode and check volume
+                </Text>
+              </View>
+            )}
 
             {/* Done Button */}
             <TouchableOpacity
@@ -923,7 +1316,14 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
                   <Text style={styles.analyzingText}>Analyzing...</Text>
                 </View>
               )}
-              <View style={styles.guidanceBox}>
+              <View
+                style={[
+                  styles.guidanceBox,
+                  {
+                    backgroundColor: `rgba(255, 255, 255, ${textBoxOpacity})`,
+                  },
+                ]}
+              >
                 <Text style={styles.guidanceText}>{currentGuidance}</Text>
               </View>
 
@@ -940,6 +1340,51 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
                       {stepStatus === 'CONFIRMED' ? 'Step Confirmed' : stepStatus === 'OVERRIDDEN' ? 'Manually Confirmed' : 'Waiting for confirmation...'}
                     </Text>
                   </View>
+                </View>
+              )}
+
+              {/* Voice Question Answer Display */}
+              {showAnswer && voiceAnswer && (
+                <View style={styles.answerContainer}>
+                  <View style={styles.answerBox}>
+                    <Ionicons name="chatbubble-ellipses" size={20} color="#1E5AA8" />
+                    <Text style={styles.answerText}>{voiceAnswer}</Text>
+                    <TouchableOpacity onPress={dismissAnswer} style={styles.dismissAnswerButton}>
+                      <Ionicons name="close-circle" size={20} color="#64748b" />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+
+              {/* Voice Question Button - Always visible once plan is loaded */}
+              {!isLoadingPlan && (
+                <View style={styles.voiceQuestionContainer}>
+                  <TouchableOpacity
+                    style={[
+                      styles.micButton,
+                      isListening && styles.micButtonListening,
+                      questionCooldown && styles.micButtonDisabled
+                    ]}
+                    onPress={startListening}
+                    disabled={isListening || questionCooldown}
+                  >
+                    {isListening ? (
+                      <>
+                        <ActivityIndicator size="small" color="#ffffff" />
+                        <Text style={styles.micButtonText}>Listening...</Text>
+                      </>
+                    ) : (
+                      <>
+                        <Ionicons name="mic" size={24} color="#ffffff" />
+                        <Text style={styles.micButtonText}>Ask a Question</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                  {voiceQuestion && !showAnswer && (
+                    <View style={styles.questionPreview}>
+                      <Text style={styles.questionPreviewText}>"{voiceQuestion}"</Text>
+                    </View>
+                  )}
                 </View>
               )}
 
@@ -1142,14 +1587,11 @@ const styles = StyleSheet.create({
   },
   guidanceContainer: {
     position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: 20,
-    paddingBottom: 40,
+    bottom: 40,
+    left: 20,
+    right: 20,
   },
   guidanceBox: {
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
     borderRadius: 16,
     padding: 20,
     flexDirection: 'row',
@@ -1159,6 +1601,8 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 8,
+    maxWidth: screenWidth - 40,
+    position: 'relative',
   },
   guidanceText: {
     flex: 1,
@@ -1482,6 +1926,22 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
+  voiceTip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#f8fafc',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 8,
+    marginBottom: 12,
+  },
+  voiceTipText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#64748b',
+    lineHeight: 16,
+  },
   voiceDoneButton: {
     backgroundColor: '#10b981',
     paddingVertical: 14,
@@ -1493,5 +1953,76 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  // Voice Question Styles
+  voiceQuestionContainer: {
+    marginTop: 12,
+    alignItems: 'center',
+  },
+  micButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#1E5AA8',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 25,
+    gap: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  micButtonListening: {
+    backgroundColor: '#ef4444',
+    transform: [{ scale: 1.05 }],
+  },
+  micButtonDisabled: {
+    backgroundColor: '#94a3b8',
+    opacity: 0.6,
+  },
+  micButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  questionPreview: {
+    marginTop: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    maxWidth: '90%',
+  },
+  questionPreviewText: {
+    fontSize: 14,
+    color: '#475569',
+    fontStyle: 'italic',
+    textAlign: 'center',
+  },
+  answerContainer: {
+    marginTop: 12,
+    marginBottom: 8,
+    paddingHorizontal: 16,
+  },
+  answerBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: 'rgba(30, 90, 168, 0.1)',
+    borderLeftWidth: 3,
+    borderLeftColor: '#1E5AA8',
+    padding: 12,
+    borderRadius: 8,
+    gap: 10,
+  },
+  answerText: {
+    flex: 1,
+    fontSize: 15,
+    color: '#1e293b',
+    lineHeight: 22,
+  },
+  dismissAnswerButton: {
+    padding: 4,
   },
 });

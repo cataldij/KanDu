@@ -60,7 +60,8 @@ type ResultsScreenProps = {
 export default function ResultsScreen({ navigation, route }: ResultsScreenProps) {
   const { diagnosis: diagnosisString, category, description, imageUri, videoUri, fromHistory, isAdvanced: initialIsAdvanced } = route.params;
   const parsedDiagnosis = JSON.parse(diagnosisString);
-  console.log('ResultsScreen - detectedItem:', JSON.stringify(parsedDiagnosis.detectedItem));
+
+
   const [diagnosis, setDiagnosis] = useState<FreeDiagnosis | AdvancedDiagnosis>(parsedDiagnosis);
   const [isUpgrading, setIsUpgrading] = useState(false);
   const [isAdvanced, setIsAdvanced] = useState(initialIsAdvanced || false);
@@ -658,7 +659,7 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
       )}
 
       {/* Advanced Sections */}
-      {isAdvanced && 'stepByStep' in diagnosis && diagnosis.stepByStep && (
+      {isAdvanced && (diagnosis as AdvancedDiagnosis).stepByStep && (
         <View style={styles.advancedCard}>
           <Text style={styles.advancedSectionTitle}>🛠️ Step-by-Step Repair Instructions</Text>
 
@@ -688,7 +689,7 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
             </LinearGradient>
           </TouchableOpacity>
 
-          {diagnosis.stepByStep.map((step, index) => (
+          {(diagnosis as AdvancedDiagnosis).stepByStep.map((step, index) => (
             <View key={index} style={styles.stepItem}>
               <Text style={styles.stepNumber}>{index + 1}</Text>
               <Text style={styles.stepText}>{step}</Text>
@@ -697,10 +698,10 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
         </View>
       )}
 
-      {isAdvanced && 'partsList' in diagnosis && diagnosis.partsList && diagnosis.partsList.length > 0 && (
+      {isAdvanced && (diagnosis as AdvancedDiagnosis).partsList && (diagnosis as AdvancedDiagnosis).partsList.length > 0 && (
         <View style={styles.advancedCard}>
           <Text style={styles.advancedSectionTitle}>🔩 Parts You'll Need</Text>
-          {diagnosis.partsList.map((part, index) => (
+          {(diagnosis as AdvancedDiagnosis).partsList.map((part, index) => (
             <View key={index} style={styles.partItemCard}>
               <View style={styles.partInfo}>
                 <Text style={styles.partName}>{part.name}</Text>

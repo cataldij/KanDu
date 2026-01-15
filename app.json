@@ -39,7 +39,8 @@
     },
     "owner": "jcataldi",
     "plugins": [
-      "expo-font"
+      "expo-font",
+      "expo-speech-recognition"
     ],
     "runtimeVersion": {
       "policy": "appVersion"

@@ -17,6 +17,7 @@ export interface GuidanceRequest {
   currentStepInstruction: string; // The actual step the user should be doing
   stepContext?: string;
   expectedItem?: string; // What item we expect to see (e.g., "2019 Audi A3")
+  originalImageBase64?: string; // Original diagnosis image for visual comparison
 }
 
 // Bounding box for highlighting detected items on screen
@@ -58,20 +59,26 @@ You are guiding a user through a repair. Your job is to help them complete the C
 Category: ${request.category}
 Problem: ${request.problemDescription}
 ${request.expectedItem ? `EXPECTED ITEM: ${request.expectedItem} (If you see a DIFFERENT make/model, flag it as wrong item!)` : ''}
+${request.originalImageBase64 ? `IMPORTANT: A reference image of the ORIGINAL item from diagnosis is provided. Compare the camera view to this reference - they should show the SAME specific item (same chair, same appliance, etc.), not just the same type of item.` : ''}
 
 === CURRENT STEP ===
 Step ${request.currentStep} of ${request.totalSteps}: "${request.currentStepInstruction}"
 ${request.stepContext ? `Looking for: ${request.stepContext}` : ''}
 
 === YOUR TASK ===
-1. Look at the camera frame
+1. Look at the camera frame${request.originalImageBase64 ? ' and compare to the reference image' : ''}
 2. Identify the main object/item visible
-3. Check if it matches the expected item (if specified)
+3. ${request.originalImageBase64 ? 'Verify it is the SAME SPECIFIC item as the reference (not just same type)' : 'Check if it matches the expected item (if specified)'}
 4. Guide the user to complete the CURRENT STEP
 5. Mark stepComplete=true ONLY when the current step is visually confirmed done
 
 === WRONG ITEM DETECTION ===
-${request.expectedItem ? `The user expects to work on: "${request.expectedItem}"
+${request.originalImageBase64 ? `A REFERENCE IMAGE is provided showing the original item from diagnosis.
+Compare the current camera view to this reference image:
+- If it's clearly a DIFFERENT item (different chair, different appliance, etc.), set wrongItem: true
+- If it appears to be the SAME item from a different angle, that's OK
+- Set detectedItemMismatch to describe what you see if it doesn't match` :
+request.expectedItem ? `The user expects to work on: "${request.expectedItem}"
 If you see a DIFFERENT vehicle/appliance (e.g., user expects "Audi A3" but you see a "Ford F-150"), you MUST:
 - Set wrongItem: true
 - Set detectedItemMismatch: "[what you actually see]"
@@ -118,8 +125,9 @@ Bad: "Looking good" (not helpful, doesn't progress the repair)
 - Don't be too strict - if the user has clearly done what the step asks, mark it complete
 - This allows the app to automatically advance to the next step`;
 
-    const contentParts = [
+    const contentParts: any[] = [
       { text: promptText },
+      { text: "CURRENT CAMERA VIEW:" },
       {
         inlineData: {
           data: request.imageBase64,
@@ -127,6 +135,19 @@ Bad: "Looking good" (not helpful, doesn't progress the repair)
         },
       },
     ];
+
+    // Add original reference image if available for visual comparison
+    if (request.originalImageBase64) {
+      contentParts.push(
+        { text: "ORIGINAL REFERENCE IMAGE (from diagnosis):" },
+        {
+          inlineData: {
+            data: request.originalImageBase64,
+            mimeType: 'image/jpeg',
+          },
+        }
+      );
+    }
 
     const result = await model.generateContent(contentParts);
     const response = await result.response;

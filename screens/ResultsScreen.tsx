@@ -44,11 +44,13 @@ type RootStackParamList = {
     category: string;
     diagnosisSummary: string;
     likelyCause?: string;
+    originalImageUri?: string;
   };
   GuidedFix: {
     category: string;
     diagnosisSummary: string;
     likelyCause?: string;
+    originalImageUri?: string;
   };
 };
 
@@ -76,6 +78,10 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
   const [localProsLoading, setLocalProsLoading] = useState(false);
   const [localProsError, setLocalProsError] = useState<string | null>(null);
   const [locationDenied, setLocationDenied] = useState(false);
+
+  // Call Script Modal state
+  const [callScriptModalVisible, setCallScriptModalVisible] = useState(false);
+  const [callScriptText, setCallScriptText] = useState('');
 
   const { user } = useAuth();
   const hasSavedRef = useRef(false);
@@ -181,16 +187,21 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
     return undefined;
   };
 
-  // Handle copying call script
-  const handleCopyCallScript = async () => {
+  // Handle showing call script modal
+  const handleShowCallScript = () => {
     const script = generateCallScript({
       detectedItem: getDetectedItem(),
       diagnosisSummary: diagnosis.diagnosis.summary,
       likelyCause: diagnosis.diagnosis.likelyCauses?.[0],
     });
+    setCallScriptText(script);
+    setCallScriptModalVisible(true);
+  };
 
-    await Clipboard.setStringAsync(script);
-    Alert.alert('Copied!', 'Call script copied to clipboard. Paste it when you call a pro.');
+  // Handle copying call script from modal
+  const handleCopyCallScript = async () => {
+    await Clipboard.setStringAsync(callScriptText);
+    Alert.alert('Copied!', 'Call script copied to clipboard.');
   };
 
   // Handle call action
@@ -531,13 +542,13 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
         <View style={styles.localHelpCard}>
           <Text style={styles.localHelpTitle}>📍 Local Help Near You</Text>
 
-          {/* Copy Call Script Button */}
+          {/* View Call Script Button */}
           <TouchableOpacity
             style={styles.callScriptButton}
-            onPress={handleCopyCallScript}
+            onPress={handleShowCallScript}
             activeOpacity={0.8}
           >
-            <Text style={styles.callScriptButtonText}>📋 Copy Call Script</Text>
+            <Text style={styles.callScriptButtonText}>📋 View Call Script</Text>
             <Text style={styles.callScriptHint}>Know what to say when you call</Text>
           </TouchableOpacity>
 
@@ -669,6 +680,7 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
               category,
               diagnosisSummary: diagnosis.diagnosis.summary,
               likelyCause: diagnosis.diagnosis.likelyCauses?.[0],
+              originalImageUri: imageUri,
             })}
             activeOpacity={0.8}
             style={styles.liveGuidanceButtonWrapper}
@@ -916,6 +928,43 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
               </View>
             )}
           />
+        </View>
+      </Modal>
+
+      {/* Call Script Modal */}
+      <Modal
+        animationType="fade"
+        transparent={true}
+        visible={callScriptModalVisible}
+        onRequestClose={() => setCallScriptModalVisible(false)}
+      >
+        <View style={styles.callScriptModalOverlay}>
+          <View style={styles.callScriptModal}>
+            <View style={styles.callScriptModalHeader}>
+              <Text style={styles.callScriptModalTitle}>📞 Call Script</Text>
+              <TouchableOpacity
+                style={styles.callScriptCloseButton}
+                onPress={() => setCallScriptModalVisible(false)}
+              >
+                <Ionicons name="close" size={24} color="#64748b" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.callScriptContent}>
+              <Text style={styles.callScriptModalText}>{callScriptText}</Text>
+            </ScrollView>
+
+            <View style={styles.callScriptModalActions}>
+              <TouchableOpacity
+                style={styles.callScriptCopyButton}
+                onPress={handleCopyCallScript}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="copy-outline" size={20} color="#ffffff" />
+                <Text style={styles.callScriptCopyButtonText}>Copy to Clipboard</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
         </View>
       </Modal>
     </ScrollView>
@@ -1796,5 +1845,70 @@ const styles = StyleSheet.create({
   liveGuidanceButtonSubtext: {
     color: 'rgba(255, 255, 255, 0.9)',
     fontSize: 14,
+  },
+  // Call Script Modal styles
+  callScriptModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  callScriptModal: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    width: '100%',
+    maxWidth: 400,
+    maxHeight: '80%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 20,
+    elevation: 10,
+  },
+  callScriptModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  callScriptModalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1E5AA8',
+  },
+  callScriptCloseButton: {
+    padding: 4,
+  },
+  callScriptContent: {
+    padding: 20,
+    maxHeight: 400,
+  },
+  callScriptModalText: {
+    fontSize: 16,
+    color: '#1e293b',
+    lineHeight: 26,
+  },
+  callScriptModalActions: {
+    padding: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+  },
+  callScriptCopyButton: {
+    backgroundColor: '#10b981',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+  },
+  callScriptCopyButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

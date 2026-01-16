@@ -10,10 +10,15 @@ import {
   Modal,
   ScrollView,
   Platform,
+  Image,
+  StatusBar,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { LinearGradient } from 'expo-linear-gradient';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Speech from 'expo-speech';
 import * as Haptics from 'expo-haptics';
+import * as FileSystem from 'expo-file-system';
 
 // Dynamic import for SpeechRecognition - may not be available on all builds
 let ExpoSpeechRecognitionModule: any = null;
@@ -69,11 +74,13 @@ type RootStackParamList = {
     category: string;
     diagnosisSummary: string;
     likelyCause?: string;
+    originalImageUri?: string;
   };
   GuidedFixDisclaimer: {
     category: string;
     diagnosisSummary: string;
     likelyCause?: string;
+    originalImageUri?: string;
   };
 };
 
@@ -83,19 +90,23 @@ type GuidedFixScreenProps = {
 };
 
 export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenProps) {
-  const { category, diagnosisSummary, likelyCause } = route.params;
+  const { category, diagnosisSummary, likelyCause, originalImageUri } = route.params;
+  const insets = useSafeAreaInsets();
 
   const [permission, requestPermission] = useCameraPermissions();
   const [demoMode, setDemoMode] = useState(false);
   const [voiceEnabled, setVoiceEnabled] = useState(true);
   const [flashEnabled, setFlashEnabled] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const isAnalyzingRef = useRef(false); // Ref to avoid stale closure in interval
+  const sessionActiveRef = useRef(true); // Ref to avoid stale closure
   const [currentGuidance, setCurrentGuidance] = useState<string>('');
   const [repairSteps, setRepairSteps] = useState<RepairStep[]>([]);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [isLoadingPlan, setIsLoadingPlan] = useState(true);
   const [sessionActive, setSessionActive] = useState(true);
   const [highlights, setHighlights] = useState<BoundingBox[]>([]);
+  const [originalImageBase64, setOriginalImageBase64] = useState<string | null>(null);
 
   // Identity Gate State
   const [identityStatus, setIdentityStatus] = useState<IdentityStatus>('UNKNOWN');
@@ -110,6 +121,12 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
 
   // Voice Settings State
   const [showVoiceModal, setShowVoiceModal] = useState(false);
+
+  // Refs for modal states to avoid stale closures in interval
+  const showVoiceModalRef = useRef(false);
+  const showIdentityModalRef = useRef(false);
+  const showOverrideModalRef = useRef(false);
+  const identityStatusRef = useRef<IdentityStatus>('UNKNOWN');
   const [availableVoices, setAvailableVoices] = useState<AvailableVoice[]>([]);
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettings>({
     rate: 0.9,
@@ -118,8 +135,8 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
     voiceName: 'Default',
   });
 
-  // Text box opacity control
-  const [textBoxOpacity, setTextBoxOpacity] = useState(0.95);
+  // Text box opacity control - start at 55% for better camera visibility
+  const [textBoxOpacity, setTextBoxOpacity] = useState(0.55);
 
   // Voice Question State (Phase 1-3)
   const [isListening, setIsListening] = useState(false);
@@ -138,6 +155,7 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
   const stepConfirmationWindow = useRef<boolean[]>([]); // Last 3 frame results
   const verificationAttempts = useRef<number>(0);
   const lastQuestionTime = useRef<number>(0);
+  const forceConfirmedRef = useRef<boolean>(false); // Skip identity checks after force confirm
   const answerTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const MIN_GUIDANCE_INTERVAL = 3000;
@@ -186,6 +204,23 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
     checkSpeechRecognition();
   }, []);
 
+  // Load original image for comparison on mount
+  useEffect(() => {
+    const loadOriginalImage = async () => {
+      if (originalImageUri) {
+        try {
+          const base64 = await FileSystem.readAsStringAsync(originalImageUri, {
+            encoding: 'base64',
+          });
+          setOriginalImageBase64(base64);
+        } catch (error) {
+          console.error('Error loading original image:', error);
+        }
+      }
+    };
+    loadOriginalImage();
+  }, [originalImageUri]);
+
   // Load repair plan on mount, cleanup on unmount
   useEffect(() => {
     loadRepairPlan();
@@ -201,12 +236,16 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
   useEffect(() => {
     if (!isLoadingPlan && sessionActive && repairSteps.length > 0 &&
         (identityStatus === 'CONFIRMED' || identityStatus === 'VERIFYING')) {
-      startFrameCapture();
-    }
-    return () => {
+      // Only start if not already running
+      if (!frameIntervalRef.current) {
+        startFrameCapture();
+      }
+    } else {
+      // Stop capture if conditions not met
       stopFrameCapture();
-    };
-  }, [isLoadingPlan, sessionActive, identityStatus]);
+    }
+    // Don't cleanup on every re-render - only stop when conditions change
+  }, [isLoadingPlan, sessionActive, identityStatus, repairSteps.length]);
 
   // Reset step status when step changes
   useEffect(() => {
@@ -214,11 +253,33 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
     stepConfirmationWindow.current = [];
   }, [currentStepIndex]);
 
+  // Keep refs in sync with state for use in interval callbacks
+  useEffect(() => {
+    showVoiceModalRef.current = showVoiceModal;
+  }, [showVoiceModal]);
+
+  useEffect(() => {
+    showIdentityModalRef.current = showIdentityModal;
+  }, [showIdentityModal]);
+
+  useEffect(() => {
+    showOverrideModalRef.current = showOverrideModal;
+  }, [showOverrideModal]);
+
+  useEffect(() => {
+    identityStatusRef.current = identityStatus;
+  }, [identityStatus]);
+
+  useEffect(() => {
+    sessionActiveRef.current = sessionActive;
+  }, [sessionActive]);
+
   // Reset analyzing state when modal closes to ensure analysis can resume
   useEffect(() => {
     if (!showVoiceModal && !showIdentityModal && !showOverrideModal) {
       // Clear any stuck analyzing state when modals close
       setIsAnalyzing(false);
+      isAnalyzingRef.current = false;
     }
 
     // Stop any preview voice when modal closes
@@ -249,9 +310,10 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
   };
 
   const startFrameCapture = () => {
+    if (frameIntervalRef.current) return; // Already running
     frameIntervalRef.current = setInterval(() => {
       captureAndAnalyzeFrame();
-    }, 3500); // Slightly slower for easier following
+    }, 2500); // 2.5 seconds
   };
 
   const stopFrameCapture = () => {
@@ -262,21 +324,27 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
   };
 
   const captureAndAnalyzeFrame = async () => {
-    if (!cameraRef.current || isAnalyzing || !sessionActive) return;
-    if (identityStatus === 'MISMATCH') return; // Don't analyze during mismatch state
-    if (showVoiceModal || showIdentityModal || showOverrideModal) return; // Don't analyze when modals are open
+    // Use refs to check state (avoids stale closure in interval callbacks)
+    if (!cameraRef.current || isAnalyzingRef.current || !sessionActiveRef.current) {
+      return;
+    }
+    if (identityStatusRef.current === 'MISMATCH') {
+      return;
+    }
+    if (showVoiceModalRef.current || showIdentityModalRef.current || showOverrideModalRef.current) {
+      return;
+    }
 
     try {
+      isAnalyzingRef.current = true;
       setIsAnalyzing(true);
 
       const photo = await cameraRef.current.takePictureAsync({
         base64: true,
         quality: 0.5,
-        mute: true,
       });
 
       if (!photo || !photo.base64) {
-        console.log('No photo captured');
         return;
       }
 
@@ -291,12 +359,14 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
         currentStepInstruction: currentStep.instruction,
         stepContext: currentStep.lookingFor,
         expectedItem: expectedItem || undefined,
+        originalImageBase64: originalImageBase64 || undefined,
       });
 
       handleGuidanceResponse(guidance);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error analyzing frame:', error);
     } finally {
+      isAnalyzingRef.current = false;
       setIsAnalyzing(false);
     }
   };
@@ -317,12 +387,78 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
     }
 
     // === IDENTITY GATE ===
-    if (guidance.wrongItem && guidance.detectedItemMismatch) {
+    if (identityStatus === 'VERIFYING') {
+      // During verification phase, we need to identify and confirm the item
+      if (guidance.detectedObject) {
+        // We detected something - announce it immediately
+        setDetectedItem(guidance.detectedObject);
+
+        // Check if it seems like a mismatch based on the diagnosis
+        if (guidance.wrongItem && guidance.detectedItemMismatch) {
+          // AI thinks this isn't the right item
+          console.log('⚠️ First detection mismatch:', guidance.detectedItemMismatch);
+          consecutiveMismatchCount.current++;
+
+          if (consecutiveMismatchCount.current >= MISMATCH_THRESHOLD) {
+            // Confirmed mismatch - show modal
+            console.log('🛑 Identity mismatch confirmed - showing modal');
+            setIdentityStatus('MISMATCH');
+            stopFrameCapture();
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            setShowIdentityModal(true);
+            speakGuidance(`Hold on. I see a ${guidance.detectedItemMismatch}, but based on your diagnosis, we should be fixing something else. Is this the right item?`, true);
+            return;
+          } else {
+            // First mismatch - announce what we see but keep checking
+            const msg = `I see a ${guidance.detectedItemMismatch}. Let me take another look...`;
+            setCurrentGuidance(msg);
+            speakGuidance(msg);
+            return;
+          }
+        } else {
+          // Item matches or no expected mismatch - confirm and proceed
+          console.log('✅ Identity confirmed:', guidance.detectedObject);
+          consecutiveMismatchCount.current = 0;
+          if (!expectedItem) {
+            setExpectedItem(guidance.detectedObject);
+          }
+          setIdentityStatus('CONFIRMED');
+          const confirmMsg = `Got it! I can see the ${guidance.detectedObject}. Let's get started.`;
+          setCurrentGuidance(confirmMsg);
+          speakGuidance(confirmMsg);
+
+          // Now announce step 1
+          setTimeout(() => {
+            const step1 = repairSteps[0];
+            setCurrentGuidance(step1.instruction);
+            speakGuidance(`Step 1: ${step1.instruction}`);
+          }, 2000);
+          return;
+        }
+      } else {
+        // Nothing detected yet - keep waiting
+        consecutiveMismatchCount.current++;
+        if (consecutiveMismatchCount.current >= 4) {
+          // After 4 attempts with no detection, ask user to adjust
+          const msg = "I'm having trouble seeing the item clearly. Try moving the camera closer or adjusting the lighting.";
+          setCurrentGuidance(msg);
+          speakGuidance(msg);
+          consecutiveMismatchCount.current = 0; // Reset and keep trying
+        }
+        return;
+      }
+    }
+
+    // === POST-VERIFICATION MISMATCH CHECK (during repair steps) ===
+    // Skip if user force confirmed - they've acknowledged the mismatch and want to continue
+    if (!forceConfirmedRef.current && guidance.wrongItem && guidance.detectedItemMismatch) {
       consecutiveMismatchCount.current++;
       setDetectedItem(guidance.detectedItemMismatch);
+      console.log('⚠️ Identity mismatch detected:', guidance.detectedItemMismatch, 'Expected:', expectedItem, 'Count:', consecutiveMismatchCount.current);
 
       if (consecutiveMismatchCount.current >= MISMATCH_THRESHOLD) {
         // Hard block - 2 consecutive mismatches
+        console.log('🛑 Identity mismatch threshold reached - stopping');
         setIdentityStatus('MISMATCH');
         stopFrameCapture();
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
@@ -330,29 +466,12 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
         speakGuidance(`Hold on. This looks like a ${guidance.detectedItemMismatch}, but we're supposed to be fixing ${expectedItem || 'something else'}.`, true);
         return;
       }
-    } else {
-      // Reset mismatch counter on successful match
-      consecutiveMismatchCount.current = 0;
-
-      // If we were verifying, now confirm identity
-      if (identityStatus === 'VERIFYING' && guidance.detectedObject) {
-        if (!expectedItem) {
-          // First detection - set as expected item
-          setExpectedItem(guidance.detectedObject);
-        }
-        setIdentityStatus('CONFIRMED');
-        const confirmMsg = `Got it! I can see the ${guidance.detectedObject}. Let's get started.`;
-        setCurrentGuidance(confirmMsg);
-        speakGuidance(confirmMsg);
-
-        // Now announce step 1
-        setTimeout(() => {
-          const step1 = repairSteps[0];
-          setCurrentGuidance(step1.instruction);
-          speakGuidance(`Step 1: ${step1.instruction}`);
-        }, 2000);
-        return;
+    } else if (!forceConfirmedRef.current) {
+      // Reset mismatch counter on successful match (only if not force confirmed)
+      if (consecutiveMismatchCount.current > 0) {
+        console.log('✅ Mismatch counter reset');
       }
+      consecutiveMismatchCount.current = 0;
     }
 
     // === STEP CONFIRMATION GATE ===
@@ -387,8 +506,10 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
 
     // Update highlights for visual overlay
     if (guidance.highlights && guidance.highlights.length > 0) {
+      console.log('🟢 Setting highlights:', guidance.highlights.length, 'boxes', guidance.highlights);
       setHighlights(guidance.highlights);
     } else {
+      console.log('⚪ No highlights in this frame');
       setHighlights([]);
     }
   };
@@ -486,9 +607,19 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
     setIdentityStatus('CONFIRMED');
     consecutiveMismatchCount.current = 0;
     verificationAttempts.current = 0;
+    forceConfirmedRef.current = true; // Skip future identity checks
 
-    speakGuidance("Okay, continuing with current item.");
-    startFrameCapture();
+    speakGuidance("Okay, I'll guide you through the steps. Just follow along and we'll figure this out together.");
+
+    // Start from step 1
+    setTimeout(() => {
+      startFrameCapture();
+      if (repairSteps.length > 0) {
+        const step1 = repairSteps[0];
+        setCurrentGuidance(step1.instruction);
+        speakGuidance(`Step 1: ${step1.instruction}`);
+      }
+    }, 2000);
   };
 
   // === STEP NAVIGATION ===
@@ -917,19 +1048,6 @@ Respond clearly in 1-2 sentences max.`
     startFrameCapture();
   };
 
-  const toggleDragMode = () => {
-    const newDragState = !isDraggable;
-    setIsDraggable(newDragState);
-
-    if (newDragState) {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      speakGuidance('Drag mode activated. Tap the box again to deactivate.', false);
-    } else {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      speakGuidance('Drag mode deactivated', false);
-    }
-  };
-
   const adjustOpacity = (delta: number) => {
     setTextBoxOpacity(prev => Math.max(0.3, Math.min(1.0, prev + delta)));
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -970,13 +1088,13 @@ Respond clearly in 1-2 sentences max.`
     return (
       <View style={styles.container}>
         <View style={styles.demoContainer}>
-          <View style={styles.topControls}>
+          <View style={styles.actionRow}>
             <TouchableOpacity style={styles.stopButton} onPress={handleStopSession}>
-              <Ionicons name="close-circle" size={28} color="#ffffff" />
+              <Ionicons name="close-circle" size={24} color="#ffffff" />
               <Text style={styles.stopButtonText}>Stop & Get Help</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.voiceToggle} onPress={toggleVoice}>
-              <Ionicons name={voiceEnabled ? 'volume-high' : 'volume-mute'} size={28} color="#ffffff" />
+            <TouchableOpacity style={styles.controlToggle} onPress={toggleVoice}>
+              <Ionicons name={voiceEnabled ? 'volume-high' : 'volume-mute'} size={22} color="#ffffff" />
             </TouchableOpacity>
           </View>
 
@@ -1045,6 +1163,9 @@ Respond clearly in 1-2 sentences max.`
 
   return (
     <View style={styles.container}>
+      {/* Hide status bar for fullscreen experience */}
+      <StatusBar hidden={true} />
+
       {/* Identity Mismatch Modal */}
       <Modal visible={showIdentityModal} transparent animationType="fade">
         <View style={styles.modalOverlay}>
@@ -1216,29 +1337,38 @@ Respond clearly in 1-2 sentences max.`
         </View>
       </Modal>
 
-      {/* Camera View - No children to avoid warning */}
+      {/* Camera View - Absolute fill, edge-to-edge */}
       <CameraView
         ref={cameraRef}
-        style={styles.camera}
+        style={StyleSheet.absoluteFillObject}
         facing="back"
         enableTorch={flashEnabled}
       />
 
       {/* Overlay UI - Positioned absolutely on top of camera */}
       <View style={styles.cameraOverlay}>
-        {/* Top Controls */}
-        <View style={styles.topControls}>
+        {/* Logo at top */}
+        <View style={styles.logoContainer}>
+          <Image
+            source={require('../assets/KanDu Together Logo 2.png')}
+            style={styles.headerLogo}
+            resizeMode="contain"
+          />
+        </View>
+
+        {/* Action Row - Below Logo */}
+        <View style={styles.actionRow}>
           <TouchableOpacity style={styles.stopButton} onPress={handleStopSession}>
-            <Ionicons name="close-circle" size={28} color="#ffffff" />
+            <Ionicons name="close-circle" size={24} color="#ffffff" />
             <Text style={styles.stopButtonText}>Stop & Get Help</Text>
           </TouchableOpacity>
 
-          <View style={styles.topRightControls}>
+          <View style={styles.actionRowRight}>
             <TouchableOpacity
               style={[styles.controlToggle, flashEnabled && styles.controlToggleActive]}
               onPress={toggleFlash}
             >
-              <Ionicons name={flashEnabled ? 'flash' : 'flash-off'} size={24} color="#ffffff" />
+              <Ionicons name={flashEnabled ? 'flash' : 'flash-off'} size={22} color="#ffffff" />
             </TouchableOpacity>
 
             <TouchableOpacity
@@ -1247,11 +1377,11 @@ Respond clearly in 1-2 sentences max.`
               onLongPress={openVoiceSettings}
               delayLongPress={500}
             >
-              <Ionicons name={voiceEnabled ? 'volume-high' : 'volume-mute'} size={24} color="#ffffff" />
+              <Ionicons name={voiceEnabled ? 'volume-high' : 'volume-mute'} size={22} color="#ffffff" />
             </TouchableOpacity>
 
             <TouchableOpacity
-              style={styles.controlToggleSmall}
+              style={styles.controlToggle}
               onPress={openVoiceSettings}
             >
               <Ionicons name="settings-outline" size={20} color="#ffffff" />
@@ -1405,6 +1535,7 @@ Respond clearly in 1-2 sentences max.`
                   </TouchableOpacity>
                 </View>
               )}
+
             </>
           )}
         </View>
@@ -1418,12 +1549,30 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#000',
   },
-  camera: {
-    flex: 1,
+  logoContainer: {
+    alignItems: 'center',
+    marginTop: -40,
+  },
+  headerLogo: {
+    width: '100%',
+    height: 280,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginTop: -120,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+  },
+  actionRowRight: {
+    flexDirection: 'row',
+    gap: 10,
   },
   cameraOverlay: {
     ...StyleSheet.absoluteFillObject,
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
   },
   permissionContainer: {
     flex: 1,
@@ -1457,50 +1606,30 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
-  topControls: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 20,
-  },
   stopButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(239, 68, 68, 0.9)',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 25,
-    gap: 8,
+    backgroundColor: 'rgba(239, 68, 68, 0.95)',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    gap: 6,
   },
   stopButtonText: {
     color: '#ffffff',
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: 'bold',
-  },
-  topRightControls: {
-    flexDirection: 'row',
-    gap: 10,
   },
   controlToggle: {
     backgroundColor: 'rgba(30, 90, 168, 0.9)',
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     justifyContent: 'center',
     alignItems: 'center',
   },
   controlToggleActive: {
     backgroundColor: 'rgba(245, 158, 11, 0.9)',
-  },
-  voiceToggle: {
-    backgroundColor: 'rgba(30, 90, 168, 0.9)',
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   // Highlight overlay styles
   highlightContainer: {
@@ -1811,15 +1940,6 @@ const styles = StyleSheet.create({
     color: '#1e293b',
     fontSize: 16,
     fontWeight: '600',
-  },
-  // Small control toggle for settings icon
-  controlToggleSmall: {
-    backgroundColor: 'rgba(30, 90, 168, 0.7)',
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
   },
   // Voice Settings Modal styles
   voiceModal: {

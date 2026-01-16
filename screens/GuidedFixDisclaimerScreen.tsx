@@ -26,11 +26,13 @@ type RootStackParamList = {
     category: string;
     diagnosisSummary: string;
     likelyCause?: string;
+    originalImageUri?: string;
   };
   GuidedFixDisclaimer: {
     category: string;
     diagnosisSummary: string;
     likelyCause?: string;
+    originalImageUri?: string;
   };
 };
 
@@ -43,16 +45,18 @@ export default function GuidedFixDisclaimerScreen({
   navigation,
   route,
 }: GuidedFixDisclaimerScreenProps) {
-  const { category, diagnosisSummary, likelyCause } = route.params;
+  const { category, diagnosisSummary, likelyCause, originalImageUri } = route.params;
   const [agreedToTerms, setAgreedToTerms] = useState(false);
 
   const handleStartGuidedFix = () => {
     if (!agreedToTerms) return;
 
-    navigation.navigate('GuidedFix', {
+    // Use replace so GuidedFix takes over and dismisses the disclaimer modal
+    navigation.replace('GuidedFix', {
       category,
       diagnosisSummary,
       likelyCause,
+      originalImageUri,
     });
   };
 

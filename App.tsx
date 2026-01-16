@@ -28,11 +28,13 @@ export type RootStackParamList = {
     category: string;
     diagnosisSummary: string;
     likelyCause?: string;
+    originalImageUri?: string;
   };
   GuidedFix: {
     category: string;
     diagnosisSummary: string;
     likelyCause?: string;
+    originalImageUri?: string;
   };
 };
 
@@ -105,6 +107,9 @@ function AppNavigator() {
         options={{
           title: 'Guided Fix',
           headerShown: false,
+          presentation: 'card',
+          contentStyle: { backgroundColor: '#000000' },
+          animation: 'slide_from_right',
         }}
       />
     </Stack.Navigator>

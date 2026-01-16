@@ -5,7 +5,7 @@
     "version": "1.0.0",
     "scheme": "kandu",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/KanDu Icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": false,
     "splash": {

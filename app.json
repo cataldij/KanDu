@@ -7,7 +7,7 @@
     "orientation": "portrait",
     "icon": "./assets/KanDu Icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -40,13 +40,16 @@
     "owner": "jcataldi",
     "plugins": [
       "expo-font",
-      "expo-speech-recognition"
+      "expo-speech-recognition",
+      "expo-media-library"
     ],
     "runtimeVersion": {
       "policy": "appVersion"
     },
     "updates": {
-      "url": "https://u.expo.dev/8721f085-479f-467e-a19f-a1214814a90f"
+      "url": "https://u.expo.dev/8721f085-479f-467e-a19f-a1214814a90f",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 0
     }
   }
 }

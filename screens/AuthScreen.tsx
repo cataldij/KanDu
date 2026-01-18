@@ -115,7 +115,7 @@ export default function AuthScreen({ navigation, route }: AuthScreenProps) {
         {/* Logo */}
         <View style={styles.logoSection}>
           <Image
-            source={require('../assets/KANDU Light mode full logo TRANSPARENT.png')}
+            source={require('../assets/kandu-light-full.png')}
             style={styles.fullLogo}
             resizeMode="contain"
           />

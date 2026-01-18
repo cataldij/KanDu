@@ -1,236 +1,132 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+/**
+ * Guided Fix Service
+ *
+ * SECURITY UPDATE: This module now uses Supabase Edge Functions
+ * instead of calling Gemini directly. API keys are kept server-side.
+ */
 
-const API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY || '';
+import * as api from './api';
 
-if (!API_KEY) {
-  console.error('GEMINI_API_KEY is not set in environment variables');
-}
+// Re-export types for backwards compatibility
+export type {
+  GuidanceRequest,
+  GuidanceResponse,
+  BoundingBox,
+  RepairStep,
+} from './api';
 
-const genAI = new GoogleGenerativeAI(API_KEY);
-
-export interface GuidanceRequest {
-  imageBase64: string;
-  category: string;
-  problemDescription: string;
-  currentStep: number;
-  totalSteps: number;
-  currentStepInstruction: string; // The actual step the user should be doing
-  stepContext?: string;
-  expectedItem?: string; // What item we expect to see (e.g., "2019 Audi A3")
-  originalImageBase64?: string; // Original diagnosis image for visual comparison
-}
-
-// Bounding box for highlighting detected items on screen
-export interface BoundingBox {
-  label: string; // What this box highlights (e.g., "Hot valve", "P-trap")
-  x: number; // Left edge as percentage of image width (0-100)
-  y: number; // Top edge as percentage of image height (0-100)
-  width: number; // Width as percentage of image width (0-100)
-  height: number; // Height as percentage of image height (0-100)
-}
-
-export interface GuidanceResponse {
-  instruction: string;
-  detectedObject?: string;
-  confidence: number;
-  stepComplete: boolean;
-  safetyWarning?: string;
-  shouldStop?: boolean;
-  wrongItem?: boolean; // True if detected object doesn't match expected item
-  detectedItemMismatch?: string; // What was detected instead (e.g., "Ford F-150")
-  highlights?: BoundingBox[]; // Items to highlight on screen
-}
+// Legacy type alias for backwards compatibility
+export type RepairPlanRequest = api.RepairPlanRequest;
 
 /**
- * Get real-time guidance from Gemini based on camera frame
- * Uses Gemini 2.5 Flash for fast, cheap responses (~$0.001 per frame)
+ * Get real-time guidance from AI based on camera frame
+ * Uses Gemini 2.5 Flash for fast, cheap responses via Edge Function
+ *
+ * @param request - The guidance request with current camera frame and step info
+ * @returns GuidanceResponse with instructions and visual highlights
+ * @throws Error if the request fails
  */
 export async function getRealTimeGuidance(
-  request: GuidanceRequest
-): Promise<GuidanceResponse> {
-  try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  request: api.GuidanceRequest
+): Promise<api.GuidanceResponse> {
+  const { data, error } = await api.getRealTimeGuidance(request);
 
-    const promptText = `REAL-TIME REPAIR ASSISTANT - Step ${request.currentStep} of ${request.totalSteps}
+  if (error) {
+    console.error('Real-time guidance error:', error);
 
-You are guiding a user through a repair. Your job is to help them complete the CURRENT STEP.
-
-=== CONTEXT ===
-Category: ${request.category}
-Problem: ${request.problemDescription}
-${request.expectedItem ? `EXPECTED ITEM: ${request.expectedItem} (If you see a DIFFERENT make/model, flag it as wrong item!)` : ''}
-${request.originalImageBase64 ? `IMPORTANT: A reference image of the ORIGINAL item from diagnosis is provided. Compare the camera view to this reference - they should show the SAME specific item (same chair, same appliance, etc.), not just the same type of item.` : ''}
-
-=== CURRENT STEP ===
-Step ${request.currentStep} of ${request.totalSteps}: "${request.currentStepInstruction}"
-${request.stepContext ? `Looking for: ${request.stepContext}` : ''}
-
-=== YOUR TASK ===
-1. Look at the camera frame${request.originalImageBase64 ? ' and compare to the reference image' : ''}
-2. Identify the main object/item visible
-3. ${request.originalImageBase64 ? 'Verify it is the SAME SPECIFIC item as the reference (not just same type)' : 'Check if it matches the expected item (if specified)'}
-4. Guide the user to complete the CURRENT STEP
-5. Mark stepComplete=true ONLY when the current step is visually confirmed done
-
-=== WRONG ITEM DETECTION ===
-${request.originalImageBase64 ? `A REFERENCE IMAGE is provided showing the original item from diagnosis.
-Compare the current camera view to this reference image:
-- If it's clearly a DIFFERENT item (different chair, different appliance, etc.), set wrongItem: true
-- If it appears to be the SAME item from a different angle, that's OK
-- Set detectedItemMismatch to describe what you see if it doesn't match` :
-request.expectedItem ? `The user expects to work on: "${request.expectedItem}"
-If you see a DIFFERENT vehicle/appliance (e.g., user expects "Audi A3" but you see a "Ford F-150"), you MUST:
-- Set wrongItem: true
-- Set detectedItemMismatch: "[what you actually see]"
-- Instruction should say: "Hold on - I'm seeing a [detected item], not [expected item]. Point me at the right one."` : 'No specific item expected - just guide through the repair.'}
-
-=== OUTPUT (STRICT JSON) ===
-{
-  "instruction": "Short guidance for current step (1-2 sentences). Guide them through THIS step, not generic advice.",
-  "detectedObject": "Main object visible (e.g., 'Ford F-150 wheel', 'Kitchen sink P-trap')",
-  "confidence": 0.0-1.0,
-  "stepComplete": true only if THIS step is visually confirmed complete,
-  "safetyWarning": null or "URGENT warning if danger detected",
-  "shouldStop": false (true only for immediate danger),
-  "wrongItem": false (true if detected object doesn't match expected item),
-  "detectedItemMismatch": null or "What you see instead of expected item",
-  "highlights": [
-    {
-      "label": "Name of item to highlight (e.g., 'Hot valve', 'P-trap')",
-      "x": 0-100 (left edge as % of image width),
-      "y": 0-100 (top edge as % of image height),
-      "width": 0-100 (box width as % of image),
-      "height": 0-100 (box height as % of image)
+    if (error.includes('Rate limit') || error.includes('limit reached')) {
+      throw new Error('Guidance limit reached. Please wait a moment before continuing.');
     }
-  ]
-}
-
-=== HIGHLIGHTS (IMPORTANT) ===
-- ALWAYS include "highlights" array with bounding boxes for key items the user should look at
-- Draw boxes around: the item being worked on, tools visible, parts to manipulate, valves, switches, etc.
-- Use approximate coordinates as percentages (0-100) of the image dimensions
-- Label each highlight clearly (e.g., "Hot water valve", "Drain plug", "Filter cover")
-- Include 1-3 highlights per frame, focusing on what's most relevant to the current step
-- Example: For "locate hot and cold valves", highlight both valves with labels "Hot" and "Cold"
-
-=== GUIDANCE EXAMPLES ===
-Good: "I can see the tire. Now locate the valve stem - it should be a small metal cap."
-Good: "Perfect, that's the P-trap. Now place the bucket underneath it."
-Good: "Hold on - I'm seeing a Ford wheel, not an Audi A3. Point me at your Audi."
-Bad: "Clean the rim" (too vague, doesn't guide through the step)
-Bad: "Looking good" (not helpful, doesn't progress the repair)
-
-=== STEP COMPLETION ===
-- stepComplete should be TRUE when you can visually confirm the current step is done
-- Don't be too strict - if the user has clearly done what the step asks, mark it complete
-- This allows the app to automatically advance to the next step`;
-
-    const contentParts: any[] = [
-      { text: promptText },
-      { text: "CURRENT CAMERA VIEW:" },
-      {
-        inlineData: {
-          data: request.imageBase64,
-          mimeType: 'image/jpeg',
-        },
-      },
-    ];
-
-    // Add original reference image if available for visual comparison
-    if (request.originalImageBase64) {
-      contentParts.push(
-        { text: "ORIGINAL REFERENCE IMAGE (from diagnosis):" },
-        {
-          inlineData: {
-            data: request.originalImageBase64,
-            mimeType: 'image/jpeg',
-          },
-        }
-      );
+    if (error.includes('Unauthorized') || error.includes('Authentication')) {
+      throw new Error('Please sign in to use the guided fix feature.');
     }
 
-    const result = await model.generateContent(contentParts);
-    const response = await result.response;
-    const text = response.text();
-
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('Invalid response format from AI');
-    }
-
-    const guidance = JSON.parse(jsonMatch[0]);
-    return guidance;
-  } catch (error) {
-    console.error('Error getting real-time guidance:', error);
     throw new Error('Failed to analyze frame. Please try again.');
   }
+
+  if (!data) {
+    throw new Error('No guidance received. Please try again.');
+  }
+
+  return data;
 }
 
 /**
  * Generate step-by-step repair plan from diagnosis
+ *
+ * @param category - The repair category
+ * @param diagnosisSummary - Summary of the diagnosis
+ * @param likelyCause - Optional likely cause of the problem
+ * @param bannedItems - Optional list of items to exclude from the plan
+ * @param confirmedSubstitutes - Optional map of original item -> substitute item
+ * @returns Array of RepairStep objects
+ * @throws Error if the request fails
  */
-export interface RepairStep {
-  stepNumber: number;
-  instruction: string;
-  safetyNote?: string;
-  lookingFor: string; // What AI should look for in camera to confirm step complete
-}
-
 export async function generateRepairPlan(
   category: string,
   diagnosisSummary: string,
-  likelyCause?: string
-): Promise<RepairStep[]> {
-  try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  likelyCause?: string,
+  bannedItems?: string[],
+  confirmedSubstitutes?: Record<string, string>
+): Promise<api.RepairStep[]> {
+  console.log('[guidedFix] generateRepairPlan called with:', { category, diagnosisSummary: diagnosisSummary?.substring(0, 100), likelyCause, bannedItems, confirmedSubstitutes });
 
-    const promptText = `GENERATE STEP-BY-STEP REPAIR PLAN
+  const { data, error } = await api.generateRepairPlan({
+    category,
+    diagnosisSummary,
+    likelyCause,
+    bannedItems,
+    confirmedSubstitutes,
+  });
 
-Category: ${category}
-Problem: ${diagnosisSummary}
-${likelyCause ? `Likely Cause: ${likelyCause}` : ''}
+  console.log('[guidedFix] API response:', { data: data ? 'received' : null, error });
 
-Create a simple, camera-guided repair plan with 3-7 steps.
+  if (error) {
+    console.error('[guidedFix] Repair plan error (full):', error);
 
-OUTPUT (STRICT JSON):
-{
-  "steps": [
-    {
-      "stepNumber": 1,
-      "instruction": "First step instruction (e.g., 'Find the P-trap under your sink')",
-      "safetyNote": "Safety note if needed, or null",
-      "lookingFor": "What to detect in camera frame (e.g., 'Curved P-trap pipe')"
-    },
-    {
-      "stepNumber": 2,
-      "instruction": "...",
-      "safetyNote": "...",
-      "lookingFor": "..."
+    if (error.includes('Rate limit') || error.includes('limit reached')) {
+      throw new Error('Daily repair plan limit reached. Please try again tomorrow.');
     }
-  ]
+    if (error.includes('Unauthorized') || error.includes('Authentication')) {
+      throw new Error('Please sign in to generate a repair plan.');
+    }
+
+    // Include actual error in message for debugging
+    throw new Error(`Repair plan failed: ${error}`);
+  }
+
+  if (!data?.steps) {
+    throw new Error('No repair plan received. Please try again.');
+  }
+
+  return data.steps;
 }
 
-REQUIREMENTS:
-- Keep instructions SHORT and ACTIONABLE
-- Each step should be something AI can visually confirm via camera
-- Include safety notes for dangerous steps
-- 3-7 steps maximum (this is guided, not comprehensive)
-- Steps should flow logically
-- Final step should be testing/verification`;
+/**
+ * Get remaining guided fix quota for the current user
+ */
+export async function getGuidedFixQuota(): Promise<{
+  guidance: { used: number; limit: number };
+  repairPlan: { used: number; limit: number };
+}> {
+  const { data, error } = await api.getUsageStats();
 
-    const result = await model.generateContent([{ text: promptText }]);
-    const response = await result.response;
-    const text = response.text();
-
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('Invalid response format from AI');
-    }
-
-    const plan = JSON.parse(jsonMatch[0]);
-    return plan.steps;
-  } catch (error) {
-    console.error('Error generating repair plan:', error);
-    throw new Error('Failed to generate repair plan. Please try again.');
+  if (error || !data) {
+    // Return defaults if we can't fetch quota
+    return {
+      guidance: { used: 0, limit: 100 },
+      repairPlan: { used: 0, limit: 20 },
+    };
   }
+
+  return {
+    guidance: {
+      used: data.guided_fix?.count || 0,
+      limit: data.guided_fix?.limit || 100,
+    },
+    repairPlan: {
+      used: data.repair_plan?.count || 0,
+      limit: data.repair_plan?.limit || 20,
+    },
+  };
 }

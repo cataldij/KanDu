@@ -1,35 +1,17 @@
 /**
- * Local Pros Service - Google Places API (New) integration
+ * Local Pros Service
  *
- * Setup: Add EXPO_PUBLIC_GOOGLE_PLACES_API_KEY to your .env file
- * Get an API key from: https://console.cloud.google.com/apis/credentials
- * Enable: Places API (New) in your Google Cloud project
+ * SECURITY UPDATE: This module now uses Supabase Edge Functions
+ * instead of calling Google Places API directly.
+ * API keys are kept server-side for security.
  */
 
-const GOOGLE_PLACES_API_KEY = process.env.EXPO_PUBLIC_GOOGLE_PLACES_API_KEY || '';
+import * as api from './api';
 
-export type LocalPro = {
-  placeId: string;
-  name: string;
-  rating?: number;
-  userRatingsTotal?: number;
-  address?: string;
-  openNow?: boolean;
-  phone?: string;
-  website?: string;
-  mapsUrl?: string;
-};
+// Re-export types for backwards compatibility
+export type { LocalPro } from './api';
 
-// In-memory cache with 5-minute TTL
-interface CacheEntry {
-  data: LocalPro[];
-  timestamp: number;
-}
-
-const cache: Map<string, CacheEntry> = new Map();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-// Category to search keyword mapping
+// Category to search keyword mapping (kept for buildMapsSearchUrl)
 const CATEGORY_KEYWORDS: Record<string, string> = {
   plumbing: 'plumber',
   electrical: 'electrician',
@@ -48,31 +30,7 @@ const AUTOMOTIVE_KEYWORDS: Record<string, string> = {
   engine: 'auto mechanic',
 };
 
-function getCacheKey(category: string, lat: number, lng: number, queryText: string): string {
-  // Round lat/lng to ~1km precision for cache efficiency
-  const roundedLat = Math.round(lat * 100) / 100;
-  const roundedLng = Math.round(lng * 100) / 100;
-  return `${category}:${roundedLat}:${roundedLng}:${queryText.toLowerCase().substring(0, 50)}`;
-}
-
-function getFromCache(key: string): LocalPro[] | null {
-  const entry = cache.get(key);
-  if (!entry) return null;
-
-  if (Date.now() - entry.timestamp > CACHE_TTL_MS) {
-    cache.delete(key);
-    return null;
-  }
-
-  return entry.data;
-}
-
-function setCache(key: string, data: LocalPro[]): void {
-  cache.set(key, { data, timestamp: Date.now() });
-}
-
 function getSearchKeyword(category: string, queryText: string): string {
-  // For automotive, try to find a more specific keyword
   if (category.toLowerCase() === 'automotive') {
     const lowerQuery = queryText.toLowerCase();
     for (const [keyword, searchTerm] of Object.entries(AUTOMOTIVE_KEYWORDS)) {
@@ -81,32 +39,13 @@ function getSearchKeyword(category: string, queryText: string): string {
       }
     }
   }
-
   return CATEGORY_KEYWORDS[category.toLowerCase()] || 'repair service';
 }
 
-// Places API (New) response types
-interface PlaceNewResult {
-  id: string;
-  displayName?: {
-    text: string;
-  };
-  formattedAddress?: string;
-  rating?: number;
-  userRatingCount?: number;
-  currentOpeningHours?: {
-    openNow?: boolean;
-  };
-  nationalPhoneNumber?: string;
-  internationalPhoneNumber?: string;
-  websiteUri?: string;
-  googleMapsUri?: string;
-}
-
-interface NearbySearchNewResponse {
-  places?: PlaceNewResult[];
-}
-
+/**
+ * Get local service providers for the given category and location
+ * Uses Supabase Edge Function to securely call Google Places API
+ */
 export async function getLocalPros(params: {
   category: string;
   queryText: string;
@@ -114,120 +53,25 @@ export async function getLocalPros(params: {
   lng: number;
   radiusMeters?: number;
   limit?: number;
-}): Promise<LocalPro[]> {
-  const { category, queryText, lat, lng, radiusMeters = 8000, limit = 5 } = params;
+}): Promise<api.LocalPro[]> {
+  const { data, error } = await api.getLocalPros({
+    category: params.category,
+    queryText: params.queryText,
+    lat: params.lat,
+    lng: params.lng,
+    radiusMeters: params.radiusMeters || 8000,
+    limit: params.limit || 5,
+  });
 
-  if (!GOOGLE_PLACES_API_KEY) {
-    console.warn('Google Places API key not configured');
-    return [];
+  if (error) {
+    // Log as warning instead of error to avoid triggering error overlays
+    console.log('[LocalPros] Service error:', error);
+
+    // Throw descriptive error so it shows in the UI
+    throw new Error(`Local pros failed: ${error}`);
   }
 
-  // Check cache first
-  const cacheKey = getCacheKey(category, lat, lng, queryText);
-  const cached = getFromCache(cacheKey);
-  if (cached) {
-    if (__DEV__) console.log('LocalPros: Cache hit for', cacheKey);
-    return cached;
-  }
-
-  try {
-    const keyword = getSearchKeyword(category, queryText);
-    if (__DEV__) console.log('LocalPros: Searching for', keyword, 'near', lat, lng);
-
-    // Use Places API (New) - Nearby Search
-    // Docs: https://developers.google.com/maps/documentation/places/web-service/nearby-search
-    const requestBody = {
-      includedTypes: ['establishment'],
-      maxResultCount: limit,
-      locationRestriction: {
-        circle: {
-          center: {
-            latitude: lat,
-            longitude: lng,
-          },
-          radius: radiusMeters,
-        },
-      },
-      // Text query to find relevant businesses
-      textQuery: keyword,
-    };
-
-    // Field mask - only request fields we need (cost optimization)
-    const fieldMask = [
-      'places.id',
-      'places.displayName',
-      'places.formattedAddress',
-      'places.rating',
-      'places.userRatingCount',
-      'places.currentOpeningHours',
-      'places.nationalPhoneNumber',
-      'places.internationalPhoneNumber',
-      'places.websiteUri',
-      'places.googleMapsUri',
-    ].join(',');
-
-    // Use Text Search (New) which is better for keyword-based searches
-    const response = await fetch(
-      'https://places.googleapis.com/v1/places:searchText',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
-          'X-Goog-FieldMask': fieldMask,
-        },
-        body: JSON.stringify({
-          textQuery: `${keyword} near me`,
-          locationBias: {
-            circle: {
-              center: {
-                latitude: lat,
-                longitude: lng,
-              },
-              radius: radiusMeters,
-            },
-          },
-          maxResultCount: limit,
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('Places API (New) error:', response.status, errorText);
-      return [];
-    }
-
-    const data: NearbySearchNewResponse = await response.json();
-    const places = data.places || [];
-
-    if (places.length === 0) {
-      setCache(cacheKey, []);
-      return [];
-    }
-
-    // Map to our LocalPro type
-    const localPros: LocalPro[] = places.map((place): LocalPro => ({
-      placeId: place.id,
-      name: place.displayName?.text || 'Unknown',
-      rating: place.rating,
-      userRatingsTotal: place.userRatingCount,
-      address: place.formattedAddress,
-      openNow: place.currentOpeningHours?.openNow,
-      phone: place.nationalPhoneNumber || place.internationalPhoneNumber,
-      website: place.websiteUri,
-      mapsUrl: place.googleMapsUri || `https://www.google.com/maps/place/?q=place_id:${place.id}`,
-    }));
-
-    // Cache the results
-    setCache(cacheKey, localPros);
-
-    if (__DEV__) console.log('LocalPros: Found', localPros.length, 'results');
-    return localPros;
-  } catch (error) {
-    console.error('LocalPros error:', error);
-    return [];
-  }
+  return data?.pros || [];
 }
 
 /**

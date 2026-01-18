@@ -64,7 +64,7 @@ export default function GuidedFixDisclaimerScreen({
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
       <View style={styles.header}>
         <Image
-          source={require('../assets/KANDU LOGO ONLY TRANSPARENT.png')}
+          source={require('../assets/kandu-logo-only.png')}
           style={styles.logo}
           resizeMode="contain"
         />

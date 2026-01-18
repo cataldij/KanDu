@@ -1,5 +1,5 @@
 import { useState, useLayoutEffect, useCallback } from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, Image, Modal } from 'react-native';
+import { StyleSheet, Text, View, TouchableOpacity, Image, Modal, ScrollView } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -213,28 +213,30 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
                 <Text style={styles.emptyNotificationsSubtext}>No pending follow-ups</Text>
               </View>
             ) : (
-              <View style={styles.notificationList}>
-                {dueFollowUps.map((notification) => (
-                  <TouchableOpacity
-                    key={notification.id}
-                    style={styles.notificationListItem}
-                    onPress={() => handleNotificationTap(notification)}
-                  >
-                    <Text style={styles.notificationListEmoji}>
-                      {getCategoryInfo(notification.category).emoji}
-                    </Text>
-                    <View style={styles.notificationListContent}>
-                      <Text style={styles.notificationListItemTitle} numberOfLines={1}>
-                        {notification.description}
+              <ScrollView style={styles.notificationListScroll} showsVerticalScrollIndicator={true}>
+                <View style={styles.notificationList}>
+                  {dueFollowUps.map((notification) => (
+                    <TouchableOpacity
+                      key={notification.id}
+                      style={styles.notificationListItem}
+                      onPress={() => handleNotificationTap(notification)}
+                    >
+                      <Text style={styles.notificationListEmoji}>
+                        {getCategoryInfo(notification.category).emoji}
                       </Text>
-                      <Text style={styles.notificationListItemSubtitle} numberOfLines={1}>
-                        {notification.diagnosis_data.diagnosis.summary}
-                      </Text>
-                    </View>
-                    <Ionicons name="chevron-forward" size={20} color="#cbd5e1" />
-                  </TouchableOpacity>
-                ))}
-              </View>
+                      <View style={styles.notificationListContent}>
+                        <Text style={styles.notificationListItemTitle} numberOfLines={1}>
+                          {notification.description}
+                        </Text>
+                        <Text style={styles.notificationListItemSubtitle} numberOfLines={1}>
+                          {notification.diagnosis_data.diagnosis.summary}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={20} color="#cbd5e1" />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </ScrollView>
             )}
           </View>
         </TouchableOpacity>
@@ -321,7 +323,7 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
         {user ? (
           <>
             <Image
-              source={require('../assets/KANDU LOGO ONLY TRANSPARENT.png')}
+              source={require('../assets/kandu-logo-only.png')}
               style={styles.logo}
               resizeMode="contain"
             />
@@ -329,7 +331,7 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
           </>
         ) : (
           <Image
-            source={require('../assets/KANDU Light mode full logo TRANSPARENT.png')}
+            source={require('../assets/kandu-light-full.png')}
             style={styles.fullLogo}
             resizeMode="contain"
           />
@@ -724,6 +726,9 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#94a3b8',
     marginTop: 4,
+  },
+  notificationListScroll: {
+    maxHeight: 400,
   },
   notificationList: {
     paddingBottom: 20,

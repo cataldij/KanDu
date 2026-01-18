@@ -24,6 +24,7 @@ import { generatePrimaryLink, getLinksForCategory, AffiliateLink } from '../serv
 import { useAuth } from '../contexts/AuthContext';
 import { saveDiagnosis, updateDiagnosis } from '../services/diagnosisStorage';
 import { LocalPro, getLocalPros, generateCallScript, buildMapsSearchUrl } from '../services/localPros';
+import DiagnosisLoadingOverlay, { ADVANCED_LOADING_MESSAGES } from '../components/DiagnosisLoadingOverlay';
 
 const { width: screenWidth } = Dimensions.get('window');
 
@@ -66,6 +67,7 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
 
   const [diagnosis, setDiagnosis] = useState<FreeDiagnosis | AdvancedDiagnosis>(parsedDiagnosis);
   const [isUpgrading, setIsUpgrading] = useState(false);
+  const [upgradeComplete, setUpgradeComplete] = useState(false); // For particle burst animation
   const [isAdvanced, setIsAdvanced] = useState(initialIsAdvanced || false);
   const [videoModalVisible, setVideoModalVisible] = useState(false);
   const [currentVideoQuery, setCurrentVideoQuery] = useState('');
@@ -147,14 +149,27 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
         }
 
         // Get current location
-        const location = await Location.getCurrentPositionAsync({
-          accuracy: Location.Accuracy.Balanced,
-        });
+        let location;
+        try {
+          location = await Location.getCurrentPositionAsync({
+            accuracy: Location.Accuracy.Balanced,
+          });
+        } catch (locError) {
+          console.log('Location error, trying last known:', locError);
+          // Try getting last known location as fallback
+          location = await Location.getLastKnownPositionAsync();
+          if (!location) {
+            setLocalProsError('Could not determine your location');
+            setLocalProsLoading(false);
+            return;
+          }
+        }
 
         const { latitude, longitude } = location.coords;
 
-        // Build query text from diagnosis
-        const queryText = `${diagnosis.diagnosis.summary} ${diagnosis.diagnosis.likelyCauses?.[0] || ''}`;
+        // Build query text from diagnosis (truncate to stay under 200 char limit)
+        const fullQuery = `${diagnosis.diagnosis.summary} ${diagnosis.diagnosis.likelyCauses?.[0] || ''}`;
+        const queryText = fullQuery.substring(0, 180);
 
         // Fetch local pros
         const pros = await getLocalPros({
@@ -166,13 +181,30 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
 
         setLocalPros(pros);
       } catch (error) {
-        console.error('Error loading local pros:', error);
-        setLocalProsError('Unable to find local professionals');
+        console.log('[LocalPros] Error loading:', error);
+        // Simplify error message for user display
+        let errorMsg = 'Could not load local professionals';
+        if (error instanceof Error) {
+          // Extract the most useful part of the error
+          if (error.message.includes('rate limit') || error.message.includes('limit reached')) {
+            errorMsg = 'Search limit reached. Try again later.';
+          } else if (error.message.includes('authentication') || error.message.includes('sign in')) {
+            errorMsg = 'Please sign in to find local pros.';
+          } else if (error.message.includes('network') || error.message.includes('fetch')) {
+            errorMsg = 'Network error. Check your connection.';
+          } else {
+            // Log full error for debugging but show generic message
+            console.log('Full local pros error:', error.message);
+            errorMsg = 'Service temporarily unavailable';
+          }
+        }
+        setLocalProsError(errorMsg);
       } finally {
         setLocalProsLoading(false);
       }
     };
 
+    // Run in background - don't block the screen
     loadLocalPros();
   }, [shouldShowLocalHelp, user, category, diagnosis]);
 
@@ -274,6 +306,7 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
     // For now, just call the advanced diagnosis directly
 
     setIsUpgrading(true);
+    setUpgradeComplete(false);
 
     try {
       console.log('Starting advanced diagnosis...');
@@ -285,18 +318,34 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
       });
 
       console.log('Advanced diagnosis received:', JSON.stringify(advancedDiag).substring(0, 200));
+
+      // Update the diagnosis IMMEDIATELY so UI updates underneath the overlay
       setDiagnosis(advancedDiag);
       setIsAdvanced(true);
-      Alert.alert('Success!', 'You now have the advanced diagnosis with detailed repair instructions.');
+
+      // Then trigger particle burst animation (overlay stays visible)
+      setUpgradeComplete(true);
+
     } catch (error) {
       console.error('Advanced diagnosis error:', error);
+      setIsUpgrading(false);
+      setUpgradeComplete(false);
       Alert.alert(
         'Upgrade Failed',
         error instanceof Error ? error.message : 'Something went wrong. Please try again.'
       );
-    } finally {
-      setIsUpgrading(false);
     }
+  };
+
+  // Called when particle burst animation completes for upgrade
+  const handleUpgradeAnimationComplete = () => {
+    // Just clean up the overlay state - UI already updated
+    setIsUpgrading(false);
+    setUpgradeComplete(false);
+    // Show success message after overlay is gone
+    setTimeout(() => {
+      Alert.alert('Success!', 'You now have the advanced diagnosis with detailed repair instructions.');
+    }, 100);
   };
 
   const openYouTubeSearch = (searchQuery: string) => {
@@ -332,7 +381,7 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
       <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
         <View style={styles.header}>
           <Image
-            source={require('../assets/KANDU LOGO ONLY TRANSPARENT.png')}
+            source={require('../assets/kandu-logo-only.png')}
             style={styles.logo}
             resizeMode="contain"
           />
@@ -419,7 +468,7 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
     <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
       <View style={styles.header}>
         <Image
-          source={require('../assets/KANDU LOGO ONLY TRANSPARENT.png')}
+          source={require('../assets/kandu-logo-only.png')}
           style={styles.logo}
           resizeMode="contain"
         />
@@ -967,6 +1016,15 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
           </View>
         </View>
       </Modal>
+
+      {/* Advanced Diagnosis Loading Overlay */}
+      <DiagnosisLoadingOverlay
+        visible={isUpgrading}
+        isLoading={!upgradeComplete}
+        onAnimationComplete={handleUpgradeAnimationComplete}
+        messages={ADVANCED_LOADING_MESSAGES}
+        subtitle="Upgrading to advanced analysis..."
+      />
     </ScrollView>
   );
 }

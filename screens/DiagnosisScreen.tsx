@@ -1,4 +1,4 @@
-import { useState, useRef, useLayoutEffect } from 'react';
+import { useState, useRef, useLayoutEffect, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -14,13 +14,19 @@ import {
   Modal,
   InteractionManager,
 } from 'react-native';
+import { supabase } from '../services/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Video, ResizeMode } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as MediaLibrary from 'expo-media-library';
+import { Video as VideoCompressor } from 'react-native-compressor';
 import { getFreeDiagnosis } from '../services/gemini';
+import VideoCompressionModal from '../components/VideoCompressionModal';
+import DiagnosisLoadingOverlay from '../components/DiagnosisLoadingOverlay';
 
 type RootStackParamList = {
   Home: undefined;
@@ -39,14 +45,265 @@ type DiagnosisScreenProps = {
   route: RouteProp<RootStackParamList, 'Diagnosis'>;
 };
 
+// Target size for compressed videos
+// Supabase Edge Functions have ~10MB request body limit
+// Base64 encoding adds ~33% overhead, so 6MB video = ~8MB base64 (safely under limit)
+const TARGET_VIDEO_SIZE_MB = 6;
+const MAX_FILE_SIZE_BYTES = 7 * 1024 * 1024;
+
 export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenProps) {
   const { category } = route.params;
   const [image, setImage] = useState<string | null>(null);
   const [video, setVideo] = useState<string | null>(null);
   const [description, setDescription] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [diagnosisComplete, setDiagnosisComplete] = useState(false); // For particle burst animation
   const [showMediaSheet, setShowMediaSheet] = useState(false);
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [compressionProgress, setCompressionProgress] = useState(0);
+  const [compressionStatus, setCompressionStatus] = useState<'compressing' | 'complete' | 'error'>('compressing');
   const scrollViewRef = useRef<ScrollView>(null);
+
+  // DEBUG: Auth status display
+  const [debugInfo, setDebugInfo] = useState<{
+    hasSession: boolean;
+    userId: string;
+    tokenPrefix: string;
+    expiresAt: string;
+    isExpired: boolean;
+  } | null>(null);
+  const [showDebug, setShowDebug] = useState(true);
+
+  // Check auth status on mount
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session) {
+          const expiresAt = session.expires_at ? session.expires_at * 1000 : 0;
+          const now = Date.now();
+          setDebugInfo({
+            hasSession: true,
+            userId: session.user?.id?.substring(0, 8) + '...' || 'none',
+            tokenPrefix: session.access_token?.substring(0, 15) + '...' || 'none',
+            expiresAt: new Date(expiresAt).toLocaleTimeString(),
+            isExpired: expiresAt < now,
+          });
+        } else {
+          setDebugInfo({
+            hasSession: false,
+            userId: 'none',
+            tokenPrefix: 'none',
+            expiresAt: 'N/A',
+            isExpired: true,
+          });
+        }
+      } catch (e) {
+        setDebugInfo({
+          hasSession: false,
+          userId: 'error',
+          tokenPrefix: 'error',
+          expiresAt: 'error',
+          isExpired: true,
+        });
+      }
+    };
+    checkAuth();
+  }, []);
+
+  // Get a local file URI for iOS videos from Photos library
+  // FileSystem.copyAsync doesn't work properly with ph:// or assets-library:// URIs for videos
+  const getLocalVideoUri = async (uri: string): Promise<string> => {
+    if (Platform.OS !== 'ios') {
+      return uri;
+    }
+
+    // If it's already a file:// URI, use it directly
+    if (uri.startsWith('file://')) {
+      return uri;
+    }
+
+    console.log('Converting iOS video URI to local file...', uri.substring(0, 50));
+
+    try {
+      // For ph:// URIs, we need to use MediaLibrary to get the asset info
+      // which gives us a proper local URI
+      if (uri.startsWith('ph://')) {
+        // Request MediaLibrary permission first
+        const { status } = await MediaLibrary.requestPermissionsAsync();
+        if (status !== 'granted') {
+          console.log('MediaLibrary permission denied, trying copy fallback...');
+        } else {
+          const assetId = uri.replace('ph://', '').split('/')[0];
+          console.log('Asset ID:', assetId);
+
+          try {
+            const asset = await MediaLibrary.getAssetInfoAsync(assetId);
+            if (asset && asset.localUri) {
+              console.log('Got local URI from MediaLibrary:', asset.localUri.substring(0, 50));
+              return asset.localUri;
+            }
+          } catch (assetError) {
+            console.log('MediaLibrary.getAssetInfoAsync failed, trying copy fallback...', assetError);
+          }
+        }
+      }
+
+      // Fallback: try to copy the file to cache directory
+      // This works for images and some video formats
+      const filename = `video_${Date.now()}.mp4`;
+      const destUri = `${FileSystem.cacheDirectory}${filename}`;
+      console.log('Attempting to copy video to:', destUri);
+
+      await FileSystem.copyAsync({ from: uri, to: destUri });
+
+      // Verify the copy worked
+      const info = await FileSystem.getInfoAsync(destUri);
+      if (info.exists && 'size' in info && info.size && info.size > 1000) {
+        console.log('Video copied successfully, size:', info.size);
+        return destUri;
+      } else {
+        console.log('Copy may have failed, file size:', info.exists ? (info as any).size : 'not found');
+        throw new Error('Video copy produced invalid file');
+      }
+    } catch (error) {
+      console.error('Error getting local video URI:', error);
+      throw new Error('Could not access video from Photos library');
+    }
+  };
+
+  // Compress video to target size
+  const compressVideo = async (uri: string): Promise<string> => {
+    try {
+      // WORKAROUND: iOS videos from Photos library (ph:// or assets-library://)
+      // don't work with FileSystem.copyAsync or react-native-compressor directly.
+      // We need to get the local file URI first using MediaLibrary.
+      // See: https://github.com/expo/expo/issues/10916
+      // See: https://github.com/numandev1/react-native-compressor/issues/69
+      let workingUri = await getLocalVideoUri(uri);
+      console.log('Working with URI:', workingUri.substring(0, 50));
+
+      // Check file size first
+      const fileInfo = await FileSystem.getInfoAsync(workingUri);
+      if (!fileInfo.exists || !('size' in fileInfo) || !fileInfo.size) {
+        return workingUri; // Can't determine size, return original
+      }
+
+      const fileSizeMB = fileInfo.size / (1024 * 1024);
+      console.log(`Original video size: ${fileSizeMB.toFixed(2)} MB`);
+
+      // If already under limit, no compression needed
+      if (fileInfo.size <= MAX_FILE_SIZE_BYTES) {
+        console.log('Video already under size limit, no compression needed');
+        return workingUri;
+      }
+
+      // Show compression modal
+      setIsCompressing(true);
+      setCompressionProgress(0);
+      setCompressionStatus('compressing');
+
+      // Calculate compression ratio needed
+      const compressionRatio = TARGET_VIDEO_SIZE_MB / fileSizeMB;
+
+      // Determine quality based on how much compression is needed
+      // Lower quality = more compression
+      let quality: 'low' | 'medium' | 'high' = 'medium';
+      if (compressionRatio < 0.3) {
+        quality = 'low';
+      } else if (compressionRatio < 0.6) {
+        quality = 'medium';
+      } else {
+        quality = 'high';
+      }
+
+      console.log(`Compressing video with quality: ${quality} (ratio: ${compressionRatio.toFixed(2)})`);
+
+      const compressedUri = await VideoCompressor.compress(
+        workingUri,
+        {
+          compressionMethod: 'auto',
+          maxSize: 720, // Max dimension 720p
+          bitrate: quality === 'low' ? 1000000 : quality === 'medium' ? 2000000 : 3000000,
+        },
+        (progress) => {
+          setCompressionProgress(progress);
+        }
+      );
+
+      // Verify compressed size
+      const compressedInfo = await FileSystem.getInfoAsync(compressedUri);
+      if (compressedInfo.exists && 'size' in compressedInfo && compressedInfo.size) {
+        const compressedSizeMB = compressedInfo.size / (1024 * 1024);
+        console.log(`Compressed video size: ${compressedSizeMB.toFixed(2)} MB`);
+
+        // If still too large, try again with lower quality
+        if (compressedInfo.size > MAX_FILE_SIZE_BYTES && quality !== 'low') {
+          console.log('Still too large, compressing again with lower quality...');
+          const recompressedUri = await VideoCompressor.compress(
+            compressedUri,
+            {
+              compressionMethod: 'auto',
+              maxSize: 480, // Further reduce to 480p
+              bitrate: 800000,
+            },
+            (progress) => {
+              setCompressionProgress(0.5 + progress * 0.5); // Show as 50-100%
+            }
+          );
+
+          setCompressionStatus('complete');
+          setTimeout(() => setIsCompressing(false), 800);
+          return recompressedUri;
+        }
+      }
+
+      setCompressionStatus('complete');
+      setTimeout(() => setIsCompressing(false), 800);
+      return compressedUri;
+
+    } catch (error) {
+      console.error('Video compression error:', error);
+      setCompressionStatus('error');
+      setTimeout(() => setIsCompressing(false), 1500);
+      throw error;
+    }
+  };
+
+  // Clean up temporary video files from document directory
+  const cleanupTempVideos = async () => {
+    try {
+      if (Platform.OS === 'ios' && FileSystem.documentDirectory) {
+        const files = await FileSystem.readDirectoryAsync(FileSystem.documentDirectory);
+        const videoFiles = files.filter(f => f.startsWith('video_') && f.endsWith('.mp4'));
+        for (const file of videoFiles) {
+          await FileSystem.deleteAsync(`${FileSystem.documentDirectory}${file}`, { idempotent: true });
+        }
+        console.log(`Cleaned up ${videoFiles.length} temp video files`);
+      }
+    } catch (error) {
+      console.log('Temp video cleanup error (non-critical):', error);
+    }
+  };
+
+  // Process video (compress if needed) and set state
+  const processAndSetVideo = async (uri: string) => {
+    try {
+      // Clean up old temp videos first
+      await cleanupTempVideos();
+
+      const compressedUri = await compressVideo(uri);
+      setVideo(compressedUri);
+      setImage(null);
+    } catch (error) {
+      console.error('Failed to process video:', error);
+      Alert.alert(
+        'Video Processing Failed',
+        'Could not optimize the video. Please try a shorter video or take a photo instead.',
+        [{ text: 'OK' }]
+      );
+    }
+  };
 
   // Override back button to always show KanDu™
   useLayoutEffect(() => {
@@ -98,7 +355,10 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        setImage(result.assets[0].uri);
+        const uri = result.assets[0].uri;
+        console.log('[pickImage] Selected image URI:', uri);
+        console.log('[pickImage] URI type:', uri.substring(0, 20));
+        setImage(uri);
         setVideo(null);
       }
     } catch (error: any) {
@@ -150,8 +410,8 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        setVideo(result.assets[0].uri);
-        setImage(null);
+        // Process and compress video if needed
+        await processAndSetVideo(result.assets[0].uri);
       }
     } catch (error: any) {
       console.error('Error picking video:', error);
@@ -180,13 +440,13 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
       const result = await ImagePicker.launchCameraAsync({
         mediaTypes: ['videos'],
         allowsEditing: false,
-        quality: quality,
-        videoMaxDuration: 30, // Limit to 30 seconds to keep file size manageable
+        quality: 1, // Record at full quality, we'll compress after
+        videoMaxDuration: 60, // Allow up to 60 seconds, compression will handle size
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        setVideo(result.assets[0].uri);
-        setImage(null);
+        // Process and compress video if needed
+        await processAndSetVideo(result.assets[0].uri);
       }
     } catch (error) {
       console.error('Error recording video:', error);
@@ -194,26 +454,6 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
     }
   };
 
-  const showVideoQualityOptions = () => {
-    Alert.alert(
-      'Video Quality',
-      'Lower quality = faster upload & more reliable analysis.\n\nKeep videos under 30 seconds for best results.',
-      [
-        {
-          text: 'Standard (Recommended)',
-          onPress: () => recordVideo(0.3),
-        },
-        {
-          text: 'High Quality',
-          onPress: () => recordVideo(0.7),
-        },
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-      ]
-    );
-  };
 
   const analyzeProblem = async () => {
     if (!image && !video && !description) {
@@ -222,6 +462,7 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
     }
 
     setIsAnalyzing(true);
+    setDiagnosisComplete(false);
 
     try {
       const diagnosis = await getFreeDiagnosis({
@@ -231,7 +472,8 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
         videoUri: video || undefined,
       });
 
-      setIsAnalyzing(false);
+      // Navigate IMMEDIATELY so Results screen loads underneath the overlay
+      // This way when the overlay fades out, Results is already there
       navigation.navigate('Results', {
         diagnosis: JSON.stringify(diagnosis),
         category,
@@ -239,13 +481,25 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
         imageUri: image || undefined,
         videoUri: video || undefined,
       });
+
+      // Trigger particle burst animation (overlay stays visible during navigation)
+      setDiagnosisComplete(true);
+
     } catch (error) {
       setIsAnalyzing(false);
+      setDiagnosisComplete(false);
       Alert.alert(
         'Analysis Failed',
         error instanceof Error ? error.message : 'Something went wrong. Please try again.'
       );
     }
+  };
+
+  // Called when particle burst animation completes
+  const handleAnimationComplete = () => {
+    // Just clean up the overlay state - navigation already happened
+    setIsAnalyzing(false);
+    setDiagnosisComplete(false);
   };
 
   const getCategoryEmoji = () => {
@@ -272,10 +526,38 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
         contentContainerStyle={styles.contentContainer}
         keyboardShouldPersistTaps="handled"
       >
+        {/* DEBUG PANEL - Remove after fixing auth issues */}
+        {showDebug && debugInfo && (
+          <View style={styles.debugPanel}>
+            <TouchableOpacity onPress={() => setShowDebug(false)}>
+              <Text style={styles.debugTitle}>🔧 DEBUG (tap to hide)</Text>
+            </TouchableOpacity>
+            <Text style={[styles.debugText, { color: debugInfo.hasSession ? '#22c55e' : '#ef4444' }]}>
+              Session: {debugInfo.hasSession ? 'YES ✓' : 'NO ✗'}
+            </Text>
+            <Text style={styles.debugText}>User: {debugInfo.userId}</Text>
+            <Text style={styles.debugText}>Token: {debugInfo.tokenPrefix}</Text>
+            <Text style={[styles.debugText, { color: debugInfo.isExpired ? '#ef4444' : '#22c55e' }]}>
+              Expires: {debugInfo.expiresAt} {debugInfo.isExpired ? '(EXPIRED!)' : '(valid)'}
+            </Text>
+            <TouchableOpacity
+              style={styles.debugButton}
+              onPress={async () => {
+                const { data: { session } } = await supabase.auth.getSession();
+                if (session?.access_token) {
+                  Alert.alert('Token (first 100 chars)', session.access_token.substring(0, 100));
+                }
+              }}
+            >
+              <Text style={styles.debugButtonText}>Show Token</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         {/* Header with Logo */}
       <View style={styles.header}>
         <Image
-          source={require('../assets/KANDU LOGO ONLY TRANSPARENT.png')}
+          source={require('../assets/kandu-logo-only.png')}
           style={styles.logo}
           resizeMode="contain"
         />
@@ -445,15 +727,7 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
 
               <TouchableOpacity
                 style={styles.sheetOption}
-                onPress={() => {
-                  setShowMediaSheet(false);
-                  // Show quality options after modal closes
-                  InteractionManager.runAfterInteractions(() => {
-                    setTimeout(() => {
-                      showVideoQualityOptions();
-                    }, 100);
-                  });
-                }}
+                onPress={() => handleMediaOption(recordVideo)}
                 activeOpacity={0.7}
               >
                 <LinearGradient
@@ -494,6 +768,20 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
           </View>
         </View>
       </Modal>
+
+      {/* Video Compression Modal */}
+      <VideoCompressionModal
+        visible={isCompressing}
+        progress={compressionProgress}
+        status={compressionStatus}
+      />
+
+      {/* Animated Logo Loading Overlay */}
+      <DiagnosisLoadingOverlay
+        visible={isAnalyzing}
+        isLoading={!diagnosisComplete}
+        onAnimationComplete={handleAnimationComplete}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -509,6 +797,36 @@ const styles = StyleSheet.create({
   contentContainer: {
     padding: 20,
     paddingTop: 16,
+  },
+  // DEBUG styles - remove after fixing auth
+  debugPanel: {
+    backgroundColor: '#1e293b',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  debugTitle: {
+    color: '#fbbf24',
+    fontWeight: 'bold',
+    fontSize: 12,
+    marginBottom: 4,
+  },
+  debugText: {
+    color: '#e2e8f0',
+    fontSize: 11,
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  debugButton: {
+    backgroundColor: '#3b82f6',
+    padding: 8,
+    borderRadius: 4,
+    marginTop: 8,
+    alignItems: 'center',
+  },
+  debugButtonText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '600',
   },
   header: {
     alignItems: 'center',

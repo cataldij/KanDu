@@ -32,7 +32,26 @@
       "Bash(npx eas-cli update:*)",
       "Bash(eas update:list:*)",
       "Bash(npx eas-cli:*)",
-      "Bash(npm info:*)"
+      "Bash(npm info:*)",
+      "Bash(git push)",
+      "Bash(eas submit:list:*)",
+      "Bash(eas build:view:*)",
+      "Bash(eas submission:list:*)",
+      "Bash(eas credentials:*)",
+      "Bash(eas whoami:*)",
+      "Bash(eas submit:*)",
+      "Bash(npx expo export:*)",
+      "Bash(supabase --version:*)",
+      "Bash(where:*)",
+      "Bash(winget install:*)",
+      "Bash(wmic os get osarchitecture)",
+      "Bash(supabase secrets set:*)",
+      "Bash(supabase functions deploy:*)",
+      "Bash(supabase secrets:*)",
+      "Bash(npx supabase functions deploy:*)",
+      "Bash(CI=1 npx eas update:*)",
+      "Bash(Get-ChildItem \"c:\\\\Users\\\\socce\\\\OneDrive\\\\Documents\\\\kandu-fresh\\\\assets\" -Name)",
+      "Bash(Select-String -Pattern \"logo|kandu\" -CaseSensitive:$false)"
     ]
   }
 }

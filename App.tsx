@@ -1,7 +1,9 @@
+import { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, View, StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import * as Updates from 'expo-updates';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import HomeScreen from './screens/HomeScreen';
 import DiagnosisScreen from './screens/DiagnosisScreen';
@@ -10,6 +12,7 @@ import AuthScreen from './screens/AuthScreen';
 import DiagnosisHistoryScreen from './screens/DiagnosisHistoryScreen';
 import GuidedFixDisclaimerScreen from './screens/GuidedFixDisclaimerScreen';
 import GuidedFixScreen from './screens/GuidedFixScreen';
+import StartupCinematicOverlay from './components/StartupCinematicOverlay';
 
 export type RootStackParamList = {
   Home: undefined;
@@ -117,11 +120,50 @@ function AppNavigator() {
 }
 
 export default function App() {
+  // Show cinematic splash on cold start
+  const [showSplash, setShowSplash] = useState(true);
+
+  // Check for OTA updates on app launch
+  useEffect(() => {
+    async function checkForUpdates() {
+      try {
+        // Only check in production builds (not dev client)
+        if (!__DEV__) {
+          console.log('[Updates] Checking for updates...');
+          const update = await Updates.checkForUpdateAsync();
+
+          if (update.isAvailable) {
+            console.log('[Updates] New update available, downloading...');
+            await Updates.fetchUpdateAsync();
+            console.log('[Updates] Update downloaded, reloading...');
+            await Updates.reloadAsync();
+          } else {
+            console.log('[Updates] App is up to date');
+          }
+        }
+      } catch (error) {
+        // Don't crash the app if update check fails
+        console.log('[Updates] Error checking for updates:', error);
+      }
+    }
+
+    checkForUpdates();
+  }, []);
+
+  const handleSplashComplete = () => {
+    setShowSplash(false);
+  };
+
   return (
     <AuthProvider>
       <NavigationContainer>
         <StatusBar style="auto" />
         <AppNavigator />
+        {/* Cinematic splash overlay - shows on cold start */}
+        <StartupCinematicOverlay
+          visible={showSplash}
+          onComplete={handleSplashComplete}
+        />
       </NavigationContainer>
     </AuthProvider>
   );

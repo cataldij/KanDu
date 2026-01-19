@@ -24,17 +24,66 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-      setLoading(false);
-    });
+    // Helper to validate user has required fields
+    const isValidUser = (user: User | null | undefined): user is User => {
+      return !!(user && user.email);
+    };
+
+    // Get initial session and verify with server
+    const initializeAuth = async () => {
+      try {
+        // First get local session
+        const { data: { session: localSession } } = await supabase.auth.getSession();
+        console.log('[Auth] Local session:', localSession ? 'exists' : 'none');
+        console.log('[Auth] Local user email:', localSession?.user?.email || 'NO EMAIL');
+
+        if (localSession) {
+          // Verify the session is actually valid with the server
+          const { data: { user: serverUser }, error } = await supabase.auth.getUser();
+          console.log('[Auth] Server user:', serverUser ? 'valid' : 'invalid');
+          console.log('[Auth] Server user email:', serverUser?.email || 'NO EMAIL');
+
+          if (error || !serverUser || !serverUser.email) {
+            // Session is invalid or user doesn't exist on server
+            console.log('[Auth] Invalid session, clearing. Error:', error?.message);
+            await supabase.auth.signOut();
+            setSession(null);
+            setUser(null);
+          } else {
+            // Valid session with verified user
+            setSession(localSession);
+            setUser(serverUser);
+          }
+        } else {
+          // No session
+          setSession(null);
+          setUser(null);
+        }
+      } catch (e) {
+        console.log('[Auth] Error during init:', e);
+        // On any error, clear session to be safe
+        await supabase.auth.signOut();
+        setSession(null);
+        setUser(null);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    initializeAuth();
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (session && !isValidUser(session.user)) {
+        // Invalid session - clear it
+        console.log('[Auth] Invalid session on state change, clearing...');
+        await supabase.auth.signOut();
+        setSession(null);
+        setUser(null);
+      } else {
+        setSession(session);
+        setUser(session?.user ?? null);
+      }
       setLoading(false);
     });
 
@@ -83,7 +132,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await supabase.auth.signOut();
     } catch (error) {
       console.error('Sign out error:', error);
-      // Force clear local session even if Supabase call fails
+    } finally {
+      // Always force clear local session state
       setSession(null);
       setUser(null);
     }

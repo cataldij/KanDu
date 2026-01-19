@@ -51,7 +51,13 @@
       "Bash(npx supabase functions deploy:*)",
       "Bash(CI=1 npx eas update:*)",
       "Bash(Get-ChildItem \"c:\\\\Users\\\\socce\\\\OneDrive\\\\Documents\\\\kandu-fresh\\\\assets\" -Name)",
-      "Bash(Select-String -Pattern \"logo|kandu\" -CaseSensitive:$false)"
+      "Bash(Select-String -Pattern \"logo|kandu\" -CaseSensitive:$false)",
+      "Read(//c/**)",
+      "Bash(git push:*)",
+      "Bash(git config:*)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\socce\\OneDrive\\Documents\\kandu-fresh\\screens"
     ]
   }
 }

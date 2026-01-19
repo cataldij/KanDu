@@ -54,7 +54,12 @@
       "Bash(Select-String -Pattern \"logo|kandu\" -CaseSensitive:$false)",
       "Read(//c/**)",
       "Bash(git push:*)",
-      "Bash(git config:*)"
+      "Bash(git config:*)",
+      "Bash(git fetch:*)",
+      "Bash(eas env:list:*)",
+      "Bash(eas env:create:*)",
+      "Bash(npx eas build:view:*)",
+      "Bash(npx eas:*)"
     ],
     "additionalDirectories": [
       "c:\\Users\\socce\\OneDrive\\Documents\\kandu-fresh\\screens"

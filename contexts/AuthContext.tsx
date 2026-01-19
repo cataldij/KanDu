@@ -27,7 +27,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Helper to validate user has required fields
     const isValidUser = (user: User | null | undefined): user is User => {
-      return !!(user && user.email);
+      return !!(user && user.email && user.id);
+    };
+
+    // Force clear all auth storage - doesn't rely on Supabase at all
+    const forceCleanStorage = async () => {
+      try {
+        const allKeys = await AsyncStorage.getAllKeys();
+        const keysToRemove = allKeys.filter(key =>
+          key.includes('supabase') ||
+          key.includes('sb-') ||
+          key.includes('auth') ||
+          key.includes('session') ||
+          key.includes('token')
+        );
+        if (keysToRemove.length > 0) {
+          await AsyncStorage.multiRemove(keysToRemove);
+          console.log('[Auth] Force cleared storage keys:', keysToRemove);
+        }
+      } catch (e) {
+        console.log('[Auth] Error in force clean:', e);
+      }
     };
 
     // Get initial session and verify with server
@@ -37,6 +57,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { data: { session: localSession } } = await supabase.auth.getSession();
         console.log('[Auth] Local session:', localSession ? 'exists' : 'none');
         console.log('[Auth] Local user email:', localSession?.user?.email || 'NO EMAIL');
+        console.log('[Auth] Local user id:', localSession?.user?.id || 'NO ID');
+
+        // If we have a session but user data is incomplete, it's corrupt
+        if (localSession && (!localSession.user?.email || !localSession.user?.id)) {
+          console.log('[Auth] Corrupt local session detected - forcing clear');
+          await forceCleanStorage();
+          try { await supabase.auth.signOut(); } catch (e) { /* ignore */ }
+          setSession(null);
+          setUser(null);
+          setLoading(false);
+          return;
+        }
 
         if (localSession) {
           // Verify the session is actually valid with the server
@@ -46,26 +78,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
           if (error || !serverUser || !serverUser.email) {
             // Session is invalid or user doesn't exist on server
-            console.log('[Auth] Invalid session, clearing. Error:', error?.message);
-
-            // Aggressively clear ALL Supabase/auth keys from AsyncStorage
-            try {
-              const allKeys = await AsyncStorage.getAllKeys();
-              const keysToRemove = allKeys.filter(key =>
-                key.includes('supabase') ||
-                key.includes('sb-') ||
-                key.includes('auth') ||
-                key.includes('session')
-              );
-              if (keysToRemove.length > 0) {
-                await AsyncStorage.multiRemove(keysToRemove);
-                console.log('[Auth] Cleared corrupt storage keys:', keysToRemove);
-              }
-            } catch (clearError) {
-              console.log('[Auth] Error clearing storage:', clearError);
-            }
-
-            await supabase.auth.signOut();
+            console.log('[Auth] Invalid server session, clearing. Error:', error?.message);
+            await forceCleanStorage();
+            try { await supabase.auth.signOut(); } catch (e) { /* ignore */ }
             setSession(null);
             setUser(null);
           } else {
@@ -80,8 +95,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } catch (e) {
         console.log('[Auth] Error during init:', e);
-        // On any error, clear session to be safe
-        await supabase.auth.signOut();
+        // On any error, force clear everything
+        await forceCleanStorage();
+        try { await supabase.auth.signOut(); } catch (err) { /* ignore */ }
         setSession(null);
         setUser(null);
       } finally {
@@ -92,11 +108,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     initializeAuth();
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('[Auth] State change:', event, session ? 'has session' : 'no session');
+
+      // If signing out, just clear state
+      if (event === 'SIGNED_OUT') {
+        setSession(null);
+        setUser(null);
+        setLoading(false);
+        return;
+      }
+
       if (session && !isValidUser(session.user)) {
-        // Invalid session - clear it
-        console.log('[Auth] Invalid session on state change, clearing...');
-        await supabase.auth.signOut();
+        // Invalid session - clear it (but don't call signOut to avoid loop)
+        console.log('[Auth] Invalid session on state change, clearing state...');
+        await forceCleanStorage();
         setSession(null);
         setUser(null);
       } else {
@@ -147,28 +173,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const signOut = async () => {
+    console.log('[Auth] Sign out requested');
+
+    // IMMEDIATELY clear React state first
+    setSession(null);
+    setUser(null);
+    console.log('[Auth] React state cleared');
+
     try {
-      // First clear all Supabase-related keys from AsyncStorage directly
+      // Clear ALL potentially auth-related keys from AsyncStorage
       const allKeys = await AsyncStorage.getAllKeys();
-      const supabaseKeys = allKeys.filter(key =>
+      console.log('[Auth] All AsyncStorage keys:', allKeys);
+
+      const keysToRemove = allKeys.filter(key =>
         key.includes('supabase') ||
         key.includes('sb-') ||
-        key.includes('auth')
+        key.includes('auth') ||
+        key.includes('session') ||
+        key.includes('token') ||
+        key.includes('user')
       );
-      if (supabaseKeys.length > 0) {
-        await AsyncStorage.multiRemove(supabaseKeys);
-        console.log('[Auth] Cleared AsyncStorage keys:', supabaseKeys);
+
+      if (keysToRemove.length > 0) {
+        await AsyncStorage.multiRemove(keysToRemove);
+        console.log('[Auth] Removed AsyncStorage keys:', keysToRemove);
       }
 
-      // Then call Supabase signOut
-      await supabase.auth.signOut();
+      // Then try Supabase signOut (may fail if credentials are bad)
+      try {
+        await supabase.auth.signOut();
+        console.log('[Auth] Supabase signOut completed');
+      } catch (supabaseError) {
+        console.log('[Auth] Supabase signOut failed (ignored):', supabaseError);
+      }
     } catch (error) {
-      console.error('Sign out error:', error);
-    } finally {
-      // Always force clear local session state
-      setSession(null);
-      setUser(null);
+      console.error('[Auth] Sign out error:', error);
     }
+
+    console.log('[Auth] Sign out complete');
   };
 
   const signInWithGoogle = async () => {

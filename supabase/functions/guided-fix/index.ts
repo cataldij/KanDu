@@ -184,10 +184,63 @@ Deno.serve(async (req) => {
       confirmedSubstitutes // Map of original item -> substitute item (e.g., {"aluminum foil": "wax paper"})
     } = body;
 
-    // Build the prompt - Optimized for accurate step completion detection and visual highlights
-    const promptText = `REPAIR GUIDANCE - Step ${currentStep}/${totalSteps}
+    // Detect if this is identity verification (step 0) - uses different prompt
+    const isIdentityVerification = currentStep === 0 && problemDescription?.toLowerCase().includes('identify');
 
-You are a real-time repair assistant. Analyze the camera frame and GUIDE the user through the current step.
+    console.log(`[guided-fix] Step: ${currentStep}, isIdentityVerification: ${isIdentityVerification}, problemDescription: ${problemDescription?.substring(0, 60)}, expectedItem: ${expectedItem}`);
+
+    // Build the prompt - different for identity verification vs normal guidance
+    let promptText: string;
+
+    if (isIdentityVerification) {
+      // IDENTITY VERIFICATION MODE - looking for a specific item to confirm
+      const itemToFind = expectedItem || problemDescription?.replace(/identify the item in view\. expected item: /i, '') || 'the item';
+
+      promptText = `ITEM IDENTIFICATION - Verify User Has Correct Item
+
+You are helping a user confirm they have the correct item before starting a repair session.
+
+=== WHAT TO FIND ===
+The user should have: "${itemToFind}"
+
+=== YOUR TASK ===
+1. Look at what's visible in the camera frame
+2. Try to identify the main object/item in view
+3. Set detectedObject to what you see (be specific - brand, model, type if visible)
+4. Provide helpful guidance to find the item if not clearly visible
+
+=== RESPONSE RULES ===
+- detectedObject: Set to the SPECIFIC item you see (e.g., "GE microwave", "kitchen faucet", "Samsung dishwasher")
+- If you can clearly identify an appliance/item, describe it specifically
+- If the view is unclear, say "Move the camera closer to the ${itemToFind}"
+- If you see the correct item, confirm it: "I can see your ${itemToFind}. Looks good!"
+- NEVER say "point camera at problem" - this is ITEM IDENTIFICATION, not problem detection
+
+=== VISUAL HIGHLIGHTS ===
+Highlight the main item you're identifying with bounding box coordinates (0-100 percentage).
+
+Example response for a visible microwave:
+{
+  "instruction": "I can see your microwave. Let's get started with the repair!",
+  "detectedObject": "GE Countertop Microwave",
+  "confidence": 0.9,
+  "highlights": [{"label": "Microwave", "x": 20, "y": 30, "width": 60, "height": 50}]
+}`;
+
+    } else {
+      // NORMAL REPAIR GUIDANCE MODE
+      promptText = `REPAIR GUIDANCE - Step ${currentStep}/${totalSteps}
+
+You are a real-time repair assistant. Analyze the camera frame and GUIDE the user through the CURRENT step ONLY.
+
+⚠️ CRITICAL RULE: You are ONLY guiding step ${currentStep} of ${totalSteps}.
+DO NOT:
+- Mention or reference steps that come AFTER step ${currentStep}
+- Tell the user what they'll do in future steps
+- Jump ahead or preview upcoming steps
+- Give guidance for anything other than completing step ${currentStep}
+
+ONLY focus on: "${currentStepInstruction}"
 
 === CONTEXT ===
 Category: ${category}
@@ -300,7 +353,11 @@ If you cannot see the expected item in the frame:
 Return ONLY valid JSON. No markdown, no explanation. Example:
 {"instruction":"Blow out the flame now","detectedObject":"Candle with flame","confidence":0.85,"stepComplete":false,"suggestCompletion":false,"completionEvidence":null,"safetyWarning":null,"shouldStop":false,"wrongItem":false,"detectedItemMismatch":null,"requiresManualAction":true,"highlights":[{"label":"Candle flame","x":45,"y":30,"width":15,"height":20}]}
 
-Remember: GUIDE, don't just identify. Every instruction must be ACTIONABLE or confirm COMPLETION.`;
+Remember:
+1. GUIDE, don't just identify - every instruction must be ACTIONABLE or confirm COMPLETION
+2. STAY ON STEP ${currentStep} - never mention or jump to future steps
+3. Only mark stepComplete=true when THIS step ("${currentStepInstruction}") is done`;
+    }
 
     // Build content parts
     const contentParts: Array<{ text: string } | { inlineData: { data: string; mimeType: string } }> = [

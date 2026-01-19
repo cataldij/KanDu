@@ -64,52 +64,6 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
   const [compressionStatus, setCompressionStatus] = useState<'compressing' | 'complete' | 'error'>('compressing');
   const scrollViewRef = useRef<ScrollView>(null);
 
-  // DEBUG: Auth status display
-  const [debugInfo, setDebugInfo] = useState<{
-    hasSession: boolean;
-    userId: string;
-    tokenPrefix: string;
-    expiresAt: string;
-    isExpired: boolean;
-  } | null>(null);
-  const [showDebug, setShowDebug] = useState(true);
-
-  // Check auth status on mount
-  useEffect(() => {
-    const checkAuth = async () => {
-      try {
-        const { data: { session } } = await supabase.auth.getSession();
-        if (session) {
-          const expiresAt = session.expires_at ? session.expires_at * 1000 : 0;
-          const now = Date.now();
-          setDebugInfo({
-            hasSession: true,
-            userId: session.user?.id?.substring(0, 8) + '...' || 'none',
-            tokenPrefix: session.access_token?.substring(0, 15) + '...' || 'none',
-            expiresAt: new Date(expiresAt).toLocaleTimeString(),
-            isExpired: expiresAt < now,
-          });
-        } else {
-          setDebugInfo({
-            hasSession: false,
-            userId: 'none',
-            tokenPrefix: 'none',
-            expiresAt: 'N/A',
-            isExpired: true,
-          });
-        }
-      } catch (e) {
-        setDebugInfo({
-          hasSession: false,
-          userId: 'error',
-          tokenPrefix: 'error',
-          expiresAt: 'error',
-          isExpired: true,
-        });
-      }
-    };
-    checkAuth();
-  }, []);
 
   // Get a local file URI for iOS videos from Photos library
   // FileSystem.copyAsync doesn't work properly with ph:// or assets-library:// URIs for videos
@@ -526,34 +480,6 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
         contentContainerStyle={styles.contentContainer}
         keyboardShouldPersistTaps="handled"
       >
-        {/* DEBUG PANEL - Remove after fixing auth issues */}
-        {showDebug && debugInfo && (
-          <View style={styles.debugPanel}>
-            <TouchableOpacity onPress={() => setShowDebug(false)}>
-              <Text style={styles.debugTitle}>🔧 DEBUG (tap to hide)</Text>
-            </TouchableOpacity>
-            <Text style={[styles.debugText, { color: debugInfo.hasSession ? '#22c55e' : '#ef4444' }]}>
-              Session: {debugInfo.hasSession ? 'YES ✓' : 'NO ✗'}
-            </Text>
-            <Text style={styles.debugText}>User: {debugInfo.userId}</Text>
-            <Text style={styles.debugText}>Token: {debugInfo.tokenPrefix}</Text>
-            <Text style={[styles.debugText, { color: debugInfo.isExpired ? '#ef4444' : '#22c55e' }]}>
-              Expires: {debugInfo.expiresAt} {debugInfo.isExpired ? '(EXPIRED!)' : '(valid)'}
-            </Text>
-            <TouchableOpacity
-              style={styles.debugButton}
-              onPress={async () => {
-                const { data: { session } } = await supabase.auth.getSession();
-                if (session?.access_token) {
-                  Alert.alert('Token (first 100 chars)', session.access_token.substring(0, 100));
-                }
-              }}
-            >
-              <Text style={styles.debugButtonText}>Show Token</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
         {/* Header with Logo */}
       <View style={styles.header}>
         <Image
@@ -797,36 +723,6 @@ const styles = StyleSheet.create({
   contentContainer: {
     padding: 20,
     paddingTop: 16,
-  },
-  // DEBUG styles - remove after fixing auth
-  debugPanel: {
-    backgroundColor: '#1e293b',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-  },
-  debugTitle: {
-    color: '#fbbf24',
-    fontWeight: 'bold',
-    fontSize: 12,
-    marginBottom: 4,
-  },
-  debugText: {
-    color: '#e2e8f0',
-    fontSize: 11,
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-  },
-  debugButton: {
-    backgroundColor: '#3b82f6',
-    padding: 8,
-    borderRadius: 4,
-    marginTop: 8,
-    alignItems: 'center',
-  },
-  debugButtonText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '600',
   },
   header: {
     alignItems: 'center',

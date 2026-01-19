@@ -46,13 +46,17 @@ interface AnimatedLogoProps {
   /** If true, fires onAnimationComplete after trace completes (for startup splash).
    *  If false (default), fires after burst completes (for loading overlays). */
   completeOnTrace?: boolean;
+  /** Total duration for the trace animation in ms (default: 4600ms = 3000 outline + 300 delay + 1300 checkmark).
+   *  If specified, adjusts both outline and checkmark proportionally. */
+  traceDuration?: number;
 }
 
 export default function AnimatedLogo({
   size = 120,
   isLoading = true,
   onAnimationComplete,
-  completeOnTrace = false
+  completeOnTrace = false,
+  traceDuration,
 }: AnimatedLogoProps) {
   // Animation values for stroke dash offset (tracing effect)
   const outlineProgress = useRef(new Animated.Value(0)).current;
@@ -72,6 +76,14 @@ export default function AnimatedLogo({
   // Path lengths
   const OUTLINE_LENGTH = 380;
   const CHECKMARK_LENGTH = 100;
+
+  // Default durations: 3000ms outline + 300ms delay + 1300ms checkmark = 4600ms total
+  // If traceDuration is provided, scale proportionally
+  const DEFAULT_TOTAL = 4600;
+  const scaleFactor = traceDuration ? traceDuration / DEFAULT_TOTAL : 1;
+  const outlineDuration = Math.round(3000 * scaleFactor);
+  const delayDuration = Math.round(300 * scaleFactor);
+  const checkmarkDuration = Math.round(1300 * scaleFactor);
 
   useEffect(() => {
     if (isLoading) {
@@ -96,14 +108,14 @@ export default function AnimatedLogo({
       Animated.sequence([
         Animated.timing(outlineProgress, {
           toValue: 1,
-          duration: 3000,
+          duration: outlineDuration,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: false,
         }),
-        Animated.delay(300),
+        Animated.delay(delayDuration),
         Animated.timing(checkmarkProgress, {
           toValue: 1,
-          duration: 1600,
+          duration: checkmarkDuration,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: false,
         }),

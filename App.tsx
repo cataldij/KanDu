@@ -5,13 +5,16 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Updates from 'expo-updates';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import HomeScreen from './screens/HomeScreen';
+import MainHomeScreen from './screens/MainHomeScreen';
 import DiagnosisScreen from './screens/DiagnosisScreen';
 import ResultsScreen from './screens/ResultsScreen';
 import AuthScreen from './screens/AuthScreen';
 import DiagnosisHistoryScreen from './screens/DiagnosisHistoryScreen';
 import GuidedFixDisclaimerScreen from './screens/GuidedFixDisclaimerScreen';
-import GuidedFixScreen from './screens/GuidedFixScreen';
+// STATE MACHINE VERSION - porting all features piece by piece
+import GuidedFixScreen from './screens/GuidedFixScreenNew';
+// import GuidedFixScreen from './screens/GuidedFixScreen'; // OLD VERSION (reference)
+import ArticleScreen from './screens/ArticleScreen';
 import StartupCinematicOverlay from './components/StartupCinematicOverlay';
 
 export type RootStackParamList = {
@@ -38,6 +41,12 @@ export type RootStackParamList = {
     diagnosisSummary: string;
     likelyCause?: string;
     originalImageUri?: string;
+  };
+  Article: {
+    title: string;
+    category: string;
+    icon: string;
+    shortDescription: string;
   };
 };
 
@@ -73,8 +82,8 @@ function AppNavigator() {
     >
       <Stack.Screen
         name="Home"
-        component={HomeScreen}
-        options={{ title: 'KanDu™', headerBackTitle: 'KanDu™' }}
+        component={MainHomeScreen}
+        options={{ headerShown: false }}
       />
       <Stack.Screen
         name="Diagnosis"
@@ -115,6 +124,11 @@ function AppNavigator() {
           animation: 'slide_from_right',
         }}
       />
+      <Stack.Screen
+        name="Article"
+        component={ArticleScreen}
+        options={{ title: 'You KanDu It' }}
+      />
     </Stack.Navigator>
   );
 }
@@ -127,19 +141,17 @@ export default function App() {
   useEffect(() => {
     async function checkForUpdates() {
       try {
-        // Only check in production builds (not dev client)
-        if (!__DEV__) {
-          console.log('[Updates] Checking for updates...');
-          const update = await Updates.checkForUpdateAsync();
+        // Check for updates in both dev and production
+        console.log('[Updates] Checking for updates...');
+        const update = await Updates.checkForUpdateAsync();
 
-          if (update.isAvailable) {
-            console.log('[Updates] New update available, downloading...');
-            await Updates.fetchUpdateAsync();
-            console.log('[Updates] Update downloaded, reloading...');
-            await Updates.reloadAsync();
-          } else {
-            console.log('[Updates] App is up to date');
-          }
+        if (update.isAvailable) {
+          console.log('[Updates] New update available, downloading...');
+          await Updates.fetchUpdateAsync();
+          console.log('[Updates] Update downloaded, reloading...');
+          await Updates.reloadAsync();
+        } else {
+          console.log('[Updates] App is up to date');
         }
       } catch (error) {
         // Don't crash the app if update check fails

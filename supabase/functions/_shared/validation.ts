@@ -165,7 +165,7 @@ export function validateGuidedFixRequest(body: unknown): ValidationResult {
     return { valid: false, error: 'Problem description is required' };
   }
 
-  if (typeof currentStep !== 'number' || currentStep < 1) {
+  if (typeof currentStep !== 'number' || currentStep < 0) {
     return { valid: false, error: 'Valid current step is required' };
   }
 

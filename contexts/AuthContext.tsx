@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { Session, User } from '@supabase/supabase-js';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../services/supabase';
 import * as Google from 'expo-auth-session/providers/google';
 import * as WebBrowser from 'expo-web-browser';
@@ -46,6 +47,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (error || !serverUser || !serverUser.email) {
             // Session is invalid or user doesn't exist on server
             console.log('[Auth] Invalid session, clearing. Error:', error?.message);
+
+            // Aggressively clear ALL Supabase/auth keys from AsyncStorage
+            try {
+              const allKeys = await AsyncStorage.getAllKeys();
+              const keysToRemove = allKeys.filter(key =>
+                key.includes('supabase') ||
+                key.includes('sb-') ||
+                key.includes('auth') ||
+                key.includes('session')
+              );
+              if (keysToRemove.length > 0) {
+                await AsyncStorage.multiRemove(keysToRemove);
+                console.log('[Auth] Cleared corrupt storage keys:', keysToRemove);
+              }
+            } catch (clearError) {
+              console.log('[Auth] Error clearing storage:', clearError);
+            }
+
             await supabase.auth.signOut();
             setSession(null);
             setUser(null);
@@ -129,6 +148,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = async () => {
     try {
+      // First clear all Supabase-related keys from AsyncStorage directly
+      const allKeys = await AsyncStorage.getAllKeys();
+      const supabaseKeys = allKeys.filter(key =>
+        key.includes('supabase') ||
+        key.includes('sb-') ||
+        key.includes('auth')
+      );
+      if (supabaseKeys.length > 0) {
+        await AsyncStorage.multiRemove(supabaseKeys);
+        console.log('[Auth] Cleared AsyncStorage keys:', supabaseKeys);
+      }
+
+      // Then call Supabase signOut
       await supabase.auth.signOut();
     } catch (error) {
       console.error('Sign out error:', error);

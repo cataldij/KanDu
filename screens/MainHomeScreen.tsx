@@ -3,7 +3,7 @@
  * Matches the clean, bright aesthetic of the rest of the app
  */
 
-import React, { useLayoutEffect, useState, useCallback } from 'react';
+import React, { useLayoutEffect, useState, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,10 @@ import {
   TouchableOpacity,
   Image,
   Modal,
+  FlatList,
+  Dimensions,
+  NativeSyntheticEvent,
+  NativeScrollEvent,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -28,6 +32,10 @@ import {
   formatDiagnosisDate,
   getAllDueFollowUps,
 } from '../services/diagnosisStorage';
+import { getArticleImages, ArticleImage } from '../services/api';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const TIPS_PER_PAGE = 6; // 3 columns x 2 rows
 
 interface ActionCard {
   id: string;
@@ -129,6 +137,7 @@ interface DailyTip {
   category: string;
   icon: string;
   imageUrl?: string;
+  fullImageUrl?: string; // For article hero images
 }
 
 export default function MainHomeScreen() {
@@ -140,6 +149,14 @@ export default function MainHomeScreen() {
   const [notificationListVisible, setNotificationListVisible] = useState(false);
   const [dailyTips, setDailyTips] = useState<DailyTip[]>([]);
   const [loadingTip, setLoadingTip] = useState(false);
+  const [currentTipPage, setCurrentTipPage] = useState(0);
+  const tipsListRef = useRef<FlatList>(null);
+
+  // Calculate grid dimensions
+  const gridPadding = 20;
+  const gridGap = 8;
+  const tileWidth = (SCREEN_WIDTH - (gridPadding * 2) - (gridGap * 2)) / 3;
+  const pageWidth = SCREEN_WIDTH - (gridPadding * 2);
 
   // Set up header with menu and notifications
   useLayoutEffect(() => {
@@ -222,7 +239,7 @@ export default function MainHomeScreen() {
 
   const loadDailyTip = async () => {
     // Version the cache so OTA updates force a refresh
-    const TIPS_VERSION = 'v3'; // Bump this when tips change
+    const TIPS_VERSION = 'v4'; // Bump this when tips change
     const today = new Date().toDateString();
     const cacheKey = `dailyTips_${TIPS_VERSION}`;
     const dateKey = `dailyTipsDate_${TIPS_VERSION}`;
@@ -236,92 +253,138 @@ export default function MainHomeScreen() {
     }
 
     // Clear old cache keys
-    await AsyncStorage.multiRemove(['dailyTips', 'dailyTipsDate', 'dailyTips_v1', 'dailyTipsDate_v1']);
+    await AsyncStorage.multiRemove(['dailyTips', 'dailyTipsDate', 'dailyTips_v1', 'dailyTipsDate_v1', 'dailyTips_v2', 'dailyTipsDate_v2', 'dailyTips_v3', 'dailyTipsDate_v3']);
 
     setLoadingTip(true);
     try {
-      // Simple DIY tasks anyone can do at home
-      const tips: DailyTip[] = [
+      // Simple DIY tasks anyone can do at home - 12 tips for 2 pages of 6
+      const baseTips: Omit<DailyTip, 'imageUrl' | 'fullImageUrl'>[] = [
         {
           title: 'Replace HVAC Filter',
           description: 'Change your air filter in 5 minutes - breathe cleaner air and lower your energy bill.',
           category: 'DIY',
           icon: '❄️',
-          imageUrl: 'https://images.unsplash.com/photo-1585771724684-38269d6639fd?w=400&h=400&fit=crop',
         },
         {
           title: 'Fix Leaky Faucet',
           description: 'Stop that annoying drip yourself - save water and money with a simple washer replacement.',
           category: 'DIY',
           icon: '🚰',
-          imageUrl: 'https://images.unsplash.com/photo-1584622650111-993a426fbf0a?w=400&h=400&fit=crop',
         },
         {
           title: 'Install Smart Outlet',
           description: 'Control your lights from your phone - no electrician needed, just 10 minutes.',
           category: 'DIY',
           icon: '⚡',
-          imageUrl: 'https://images.unsplash.com/photo-1545259741-2ea3ebf61fa3?w=400&h=400&fit=crop',
         },
         {
           title: 'Unclog Drain',
           description: 'Clear slow drains without harsh chemicals - simple tools get the job done fast.',
           category: 'DIY',
           icon: '🔧',
-          imageUrl: 'https://images.unsplash.com/photo-1585704032915-c3400ca199e7?w=400&h=400&fit=crop',
         },
         {
           title: 'Caulk Bathtub',
           description: 'Seal gaps around your tub - prevent mold and water damage in one afternoon.',
           category: 'DIY',
           icon: '🛁',
-          imageUrl: 'https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?w=400&h=400&fit=crop',
         },
         {
           title: 'Replace Doorknob',
           description: 'Upgrade old hardware yourself - modern locks installed in 15 minutes.',
           category: 'DIY',
           icon: '🚪',
-          imageUrl: 'https://images.unsplash.com/photo-1558346648-9757f2fa4474?w=400&h=400&fit=crop',
         },
         {
           title: 'Patch Drywall',
           description: 'Fix holes in walls like a pro - smooth finish with basic supplies.',
           category: 'DIY',
           icon: '🏠',
-          imageUrl: 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=400&h=400&fit=crop',
         },
         {
           title: 'Install Shelf',
           description: 'Mount floating shelves securely - add storage and style in 30 minutes.',
           category: 'DIY',
           icon: '📚',
-          imageUrl: 'https://images.unsplash.com/photo-1595428774223-ef52624120d2?w=400&h=400&fit=crop',
         },
         {
           title: 'Replace Showerhead',
           description: 'Upgrade your shower experience - install a new head with just your hands.',
           category: 'DIY',
           icon: '🚿',
-          imageUrl: 'https://images.unsplash.com/photo-1564540586988-aa4e53c3d799?w=400&h=400&fit=crop',
         },
         {
           title: 'Clean Garbage Disposal',
           description: 'Freshen and sharpen blades - ice cubes and citrus do the trick.',
           category: 'DIY',
           icon: '🍋',
-          imageUrl: 'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=400&h=400&fit=crop',
+        },
+        {
+          title: 'Reset Circuit Breaker',
+          description: 'Safely restore power when a breaker trips - no electrician required.',
+          category: 'DIY',
+          icon: '⚡',
+        },
+        {
+          title: 'Fix Running Toilet',
+          description: 'Stop wasting water with a simple flapper or fill valve adjustment.',
+          category: 'DIY',
+          icon: '🚽',
         },
       ];
 
-      // Pick 9 rotating tips based on day of year
+      // Pick 12 rotating tips based on day of year (2 pages of 6)
       const dayOfYear = Math.floor((Date.now() - new Date(new Date().getFullYear(), 0, 0).getTime()) / 86400000);
-      const startIndex = dayOfYear % tips.length;
+      const startIndex = dayOfYear % baseTips.length;
 
-      // Get 9 consecutive tips (wrapping around if needed)
-      const selectedTips: DailyTip[] = [];
-      for (let i = 0; i < 9; i++) {
-        selectedTips.push(tips[(startIndex + i) % tips.length]);
+      // Get 12 consecutive tips (wrapping around if needed)
+      const selectedBaseTips: Omit<DailyTip, 'imageUrl' | 'fullImageUrl'>[] = [];
+      for (let i = 0; i < 12; i++) {
+        selectedBaseTips.push(baseTips[(startIndex + i) % baseTips.length]);
+      }
+
+      // Fallback images in case API fails
+      const fallbackImages: Record<string, { thumbnail: string; full: string }> = {
+        'Replace HVAC Filter': { thumbnail: 'https://images.unsplash.com/photo-1585771724684-38269d6639fd?w=400&h=400&fit=crop', full: 'https://images.unsplash.com/photo-1585771724684-38269d6639fd?w=1080' },
+        'Fix Leaky Faucet': { thumbnail: 'https://images.unsplash.com/photo-1584622650111-993a426fbf0a?w=400&h=400&fit=crop', full: 'https://images.unsplash.com/photo-1584622650111-993a426fbf0a?w=1080' },
+        'Install Smart Outlet': { thumbnail: 'https://images.unsplash.com/photo-1545259741-2ea3ebf61fa3?w=400&h=400&fit=crop', full: 'https://images.unsplash.com/photo-1545259741-2ea3ebf61fa3?w=1080' },
+        'Unclog Drain': { thumbnail: 'https://images.unsplash.com/photo-1585704032915-c3400ca199e7?w=400&h=400&fit=crop', full: 'https://images.unsplash.com/photo-1585704032915-c3400ca199e7?w=1080' },
+        'Caulk Bathtub': { thumbnail: 'https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?w=400&h=400&fit=crop', full: 'https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?w=1080' },
+        'Replace Doorknob': { thumbnail: 'https://images.unsplash.com/photo-1558346648-9757f2fa4474?w=400&h=400&fit=crop', full: 'https://images.unsplash.com/photo-1558346648-9757f2fa4474?w=1080' },
+        'Patch Drywall': { thumbnail: 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=400&h=400&fit=crop', full: 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=1080' },
+        'Install Shelf': { thumbnail: 'https://images.unsplash.com/photo-1595428774223-ef52624120d2?w=400&h=400&fit=crop', full: 'https://images.unsplash.com/photo-1595428774223-ef52624120d2?w=1080' },
+        'Replace Showerhead': { thumbnail: 'https://images.unsplash.com/photo-1564540586988-aa4e53c3d799?w=400&h=400&fit=crop', full: 'https://images.unsplash.com/photo-1564540586988-aa4e53c3d799?w=1080' },
+        'Clean Garbage Disposal': { thumbnail: 'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=400&h=400&fit=crop', full: 'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=1080' },
+        'Reset Circuit Breaker': { thumbnail: 'https://images.unsplash.com/photo-1621905251918-48416bd8575a?w=400&h=400&fit=crop', full: 'https://images.unsplash.com/photo-1621905251918-48416bd8575a?w=1080' },
+        'Fix Running Toilet': { thumbnail: 'https://images.unsplash.com/photo-1585704032915-c3400ca199e7?w=400&h=400&fit=crop', full: 'https://images.unsplash.com/photo-1585704032915-c3400ca199e7?w=1080' },
+      };
+
+      // Try to fetch AI-powered images from Unsplash
+      let selectedTips: DailyTip[];
+      try {
+        const titles = selectedBaseTips.map(t => t.title);
+        const { data, error } = await getArticleImages(titles);
+
+        if (data && data.images && !error) {
+          // Map API images to tips
+          const imageMap = new Map(data.images.map(img => [img.title, { thumbnail: img.thumbnailUrl, full: img.fullUrl }]));
+          selectedTips = selectedBaseTips.map(tip => ({
+            ...tip,
+            imageUrl: imageMap.get(tip.title)?.thumbnail || fallbackImages[tip.title]?.thumbnail || 'https://images.unsplash.com/photo-1581092918056-0c4c3acd3789?w=400&h=400&fit=crop',
+            fullImageUrl: imageMap.get(tip.title)?.full || fallbackImages[tip.title]?.full || 'https://images.unsplash.com/photo-1581092918056-0c4c3acd3789?w=1080',
+          }));
+          console.log('[MainHome] Loaded AI-powered images for tips');
+        } else {
+          throw new Error(error || 'Failed to fetch images');
+        }
+      } catch (apiError) {
+        console.log('[MainHome] API image fetch failed, using fallbacks:', apiError);
+        // Use fallback images
+        selectedTips = selectedBaseTips.map(tip => ({
+          ...tip,
+          imageUrl: fallbackImages[tip.title]?.thumbnail || 'https://images.unsplash.com/photo-1581092918056-0c4c3acd3789?w=400&h=400&fit=crop',
+          fullImageUrl: fallbackImages[tip.title]?.full || 'https://images.unsplash.com/photo-1581092918056-0c4c3acd3789?w=1080',
+        }));
       }
 
       setDailyTips(selectedTips);
@@ -361,8 +424,55 @@ export default function MainHomeScreen() {
       category: tip.category,
       icon: tip.icon,
       shortDescription: tip.description,
+      heroImageUrl: tip.fullImageUrl,
     });
   };
+
+  // Handle scroll events for pagination dots
+  const handleTipsScroll = (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const offsetX = event.nativeEvent.contentOffset.x;
+    const page = Math.round(offsetX / pageWidth);
+    setCurrentTipPage(page);
+  };
+
+  // Group tips into pages of 6
+  const tipPages = [];
+  for (let i = 0; i < dailyTips.length; i += TIPS_PER_PAGE) {
+    tipPages.push(dailyTips.slice(i, i + TIPS_PER_PAGE));
+  }
+
+  // Render a single tip tile
+  const renderTipTile = (tip: DailyTip, index: number) => (
+    <TouchableOpacity
+      key={index}
+      style={[styles.tipSquare, { width: tileWidth, height: tileWidth }]}
+      activeOpacity={0.8}
+      onPress={() => handleTipPress(tip)}
+    >
+      <Image
+        source={{ uri: tip.imageUrl }}
+        style={styles.tipSquareImage}
+      />
+      <LinearGradient
+        colors={['transparent', 'rgba(0, 0, 0, 0.75)']}
+        style={styles.tipSquareGradient}
+      >
+        <Text style={styles.tipSquareTitle}>{tip.title}</Text>
+      </LinearGradient>
+    </TouchableOpacity>
+  );
+
+  // Render a page of 6 tips (3x2 grid)
+  const renderTipPage = ({ item: pageTips, index }: { item: DailyTip[]; index: number }) => (
+    <View style={[styles.tipPage, { width: pageWidth }]}>
+      <View style={styles.tipRow}>
+        {pageTips.slice(0, 3).map((tip, i) => renderTipTile(tip, index * TIPS_PER_PAGE + i))}
+      </View>
+      <View style={styles.tipRow}>
+        {pageTips.slice(3, 6).map((tip, i) => renderTipTile(tip, index * TIPS_PER_PAGE + 3 + i))}
+      </View>
+    </View>
+  );
 
   return (
     <View style={styles.container}>
@@ -526,7 +636,7 @@ export default function MainHomeScreen() {
           </View>
         )}
 
-        {/* KanDu it Yourself section */}
+        {/* KanDu it Yourself section - Swipeable 3x2 Grid */}
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>KanDu it Yourself 🛠️</Text>
@@ -535,27 +645,37 @@ export default function MainHomeScreen() {
             <View style={styles.tipLoadingCard}>
               <Text style={styles.tipLoadingText}>Loading tips...</Text>
             </View>
-          ) : dailyTips.length > 0 ? (
-            <View style={styles.tipsGrid}>
-              {dailyTips.map((tip, index) => (
-                <TouchableOpacity
-                  key={index}
-                  style={styles.tipSquare}
-                  activeOpacity={0.8}
-                  onPress={() => handleTipPress(tip)}
-                >
-                  <Image
-                    source={{ uri: tip.imageUrl }}
-                    style={styles.tipSquareImage}
-                  />
-                  <LinearGradient
-                    colors={['transparent', 'rgba(0, 0, 0, 0.75)']}
-                    style={styles.tipSquareGradient}
-                  >
-                    <Text style={styles.tipSquareTitle}>{tip.title}</Text>
-                  </LinearGradient>
-                </TouchableOpacity>
-              ))}
+          ) : tipPages.length > 0 ? (
+            <View>
+              <FlatList
+                ref={tipsListRef}
+                data={tipPages}
+                renderItem={renderTipPage}
+                keyExtractor={(_, index) => `page-${index}`}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                onScroll={handleTipsScroll}
+                scrollEventThrottle={16}
+                decelerationRate="fast"
+                snapToInterval={pageWidth}
+                snapToAlignment="start"
+                contentContainerStyle={styles.tipsContainer}
+              />
+              {/* Pagination Dots */}
+              {tipPages.length > 1 && (
+                <View style={styles.paginationDots}>
+                  {tipPages.map((_, index) => (
+                    <View
+                      key={index}
+                      style={[
+                        styles.paginationDot,
+                        currentTipPage === index && styles.paginationDotActive,
+                      ]}
+                    />
+                  ))}
+                </View>
+              )}
             </View>
           ) : null}
         </View>
@@ -930,16 +1050,19 @@ const styles = StyleSheet.create({
     color: '#1e293b',
     lineHeight: 20,
   },
-  // You KanDu It tip section - 3x3 Grid
-  tipsGrid: {
+  // You KanDu It tip section - Swipeable 3x2 Grid
+  tipsContainer: {
+    // Container for the horizontal FlatList
+  },
+  tipPage: {
+    // Each page of 6 tips
+  },
+  tipRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
     justifyContent: 'space-between',
+    marginBottom: 8,
   },
   tipSquare: {
-    width: '31.5%',
-    aspectRatio: 1,
     borderRadius: 14,
     overflow: 'hidden',
     backgroundColor: '#f1f5f9',
@@ -950,6 +1073,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 12,
     elevation: 5,
+    marginHorizontal: 4,
   },
   tipSquareImage: {
     width: '100%',
@@ -973,6 +1097,23 @@ const styles = StyleSheet.create({
     textShadowColor: 'rgba(0, 0, 0, 0.5)',
     textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
+  },
+  paginationDots: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 12,
+  },
+  paginationDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#cbd5e1',
+    marginHorizontal: 4,
+  },
+  paginationDotActive: {
+    backgroundColor: '#1E90FF',
+    width: 24,
   },
   tipLoadingCard: {
     backgroundColor: '#ffffff',

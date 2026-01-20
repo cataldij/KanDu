@@ -638,3 +638,23 @@ export async function getUserCredits(): Promise<ApiResult<Record<string, number>
 
   return { data: creditMap, error: null };
 }
+
+// ============================================
+// ARTICLE IMAGES API
+// ============================================
+
+export interface ArticleImage {
+  title: string;
+  searchTerm: string;
+  thumbnailUrl: string;
+  fullUrl: string;
+}
+
+/**
+ * Get optimized images for article titles using Gemini + Unsplash
+ */
+export async function getArticleImages(
+  titles: string[]
+): Promise<ApiResult<{ images: ArticleImage[] }>> {
+  return callFunction<{ images: ArticleImage[] }>('article-images', { titles });
+}

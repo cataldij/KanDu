@@ -25,6 +25,7 @@ type RootStackParamList = {
     category: string;
     icon: string;
     shortDescription: string;
+    heroImageUrl?: string; // Optional dynamic hero image from AI
   };
 };
 
@@ -55,7 +56,7 @@ interface ArticleContent {
 }
 
 export default function ArticleScreen({ navigation, route }: ArticleScreenProps) {
-  const { title, category, icon, shortDescription } = route.params;
+  const { title, category, icon, shortDescription, heroImageUrl } = route.params;
   const [article, setArticle] = useState<ArticleContent | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -65,9 +66,14 @@ export default function ArticleScreen({ navigation, route }: ArticleScreenProps)
 
   const loadArticle = async () => {
     try {
-      // For now, generate a static article based on the title
-      // TODO: Call Gemini API to generate dynamic content
+      // Generate static article content
       const generatedArticle = generateArticleContent(title, category, shortDescription);
+
+      // Override hero image with dynamic AI-selected image if available
+      if (heroImageUrl) {
+        generatedArticle.imageUrl = heroImageUrl;
+      }
+
       setArticle(generatedArticle);
     } catch (error) {
       console.error('Error loading article:', error);

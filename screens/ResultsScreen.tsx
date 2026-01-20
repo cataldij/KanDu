@@ -740,11 +740,16 @@ export default function ResultsScreen({ navigation, route }: ResultsScreenProps)
               end={{ x: 1, y: 0 }}
               style={styles.liveGuidanceButton}
             >
+              {/* LIVE Badge */}
+              <View style={styles.liveBadge}>
+                <View style={styles.liveDot} />
+                <Text style={styles.liveBadgeText}>LIVE</Text>
+              </View>
               <View style={styles.liveGuidanceContent}>
                 <Ionicons name="videocam" size={28} color="#ffffff" />
                 <View style={styles.liveGuidanceTextContainer}>
                   <Text style={styles.liveGuidanceButtonText}>We KanDu this together</Text>
-                  <Text style={styles.liveGuidanceButtonSubtext}>I'll guide you step by step using your camera</Text>
+                  <Text style={styles.liveGuidanceButtonSubtext}>Tap to start a live guided help session</Text>
                 </View>
               </View>
             </LinearGradient>
@@ -1881,10 +1886,38 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.3,
     shadowRadius: 12,
     elevation: 8,
+    borderWidth: 2,
+    borderColor: '#34d399',
   },
   liveGuidanceButton: {
-    borderRadius: 16,
+    borderRadius: 14,
     padding: 18,
+    position: 'relative',
+  },
+  liveBadge: {
+    position: 'absolute',
+    bottom: 8,
+    right: 8,
+    backgroundColor: '#dc2626',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    zIndex: 10,
+  },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#ffffff',
+  },
+  liveBadgeText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: 'bold',
+    letterSpacing: 0.5,
   },
   liveGuidanceContent: {
     flexDirection: 'row',

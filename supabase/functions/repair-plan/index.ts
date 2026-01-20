@@ -63,7 +63,7 @@ Deno.serve(async (req) => {
     }
     console.log('[repair-plan] Gemini API key present');
 
-    // Initialize Gemini - using gemini-2.5-flash for better reasoning/planning
+    // Initialize Gemini - using gemini-2.5-flash for best price-performance
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 
     // Define JSON schema for structured output - guarantees consistent response format
@@ -120,7 +120,7 @@ Deno.serve(async (req) => {
       required: ["steps"]
     };
 
-    // Using gemini-2.5-flash for better reasoning/planning capabilities
+    // Using gemini-2.5-flash for best price-performance and reasoning
     const model = genAI.getGenerativeModel({
       model: 'gemini-2.5-flash',
       generationConfig: {

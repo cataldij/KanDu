@@ -5,6 +5,7 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Updates from 'expo-updates';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import HomeScreen from './screens/HomeScreen';
 import MainHomeScreen from './screens/MainHomeScreen';
 import DiagnosisScreen from './screens/DiagnosisScreen';
 import ResultsScreen from './screens/ResultsScreen';
@@ -15,6 +16,9 @@ import GuidedFixDisclaimerScreen from './screens/GuidedFixDisclaimerScreen';
 import GuidedFixScreen from './screens/GuidedFixScreenNew';
 // import GuidedFixScreen from './screens/GuidedFixScreen'; // OLD VERSION (reference)
 import ArticleScreen from './screens/ArticleScreen';
+import LearnItScreen from './screens/LearnItScreen';
+import PlanItScreen from './screens/PlanItScreen';
+import DoItScreen from './screens/DoItScreen';
 import StartupCinematicOverlay from './components/StartupCinematicOverlay';
 
 export type RootStackParamList = {
@@ -48,12 +52,15 @@ export type RootStackParamList = {
     icon: string;
     shortDescription: string;
   };
+  LearnIt: undefined;
+  PlanIt: undefined;
+  DoIt: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 function AppNavigator() {
-  const { loading } = useAuth();
+  const { user, loading } = useAuth();
 
   if (loading) {
     return (
@@ -74,15 +81,15 @@ function AppNavigator() {
         headerTitleStyle: {
           fontWeight: '700',
           fontSize: 22,
-          letterSpacing: 0.5,
         },
+        headerBackTitle: 'KanDu™',
         headerShadowVisible: true,
         headerBlurEffect: 'dark',
       }}
     >
       <Stack.Screen
         name="Home"
-        component={MainHomeScreen}
+        component={user ? MainHomeScreen : HomeScreen}
         options={{ headerShown: false }}
       />
       <Stack.Screen
@@ -128,6 +135,21 @@ function AppNavigator() {
         name="Article"
         component={ArticleScreen}
         options={{ title: 'You KanDu It' }}
+      />
+      <Stack.Screen
+        name="LearnIt"
+        component={LearnItScreen}
+        options={{ title: 'Learn It' }}
+      />
+      <Stack.Screen
+        name="PlanIt"
+        component={PlanItScreen}
+        options={{ title: 'Plan It' }}
+      />
+      <Stack.Screen
+        name="DoIt"
+        component={DoItScreen}
+        options={{ title: 'Do It' }}
       />
     </Stack.Navigator>
   );

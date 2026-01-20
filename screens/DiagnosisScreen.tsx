@@ -1,3 +1,9 @@
+/**
+ * DiagnosisScreen - "Fix It"
+ * Users select a category, then upload photo/video and describe their problem
+ * Redesigned to match the Learn It, Plan It, Do It screen pattern
+ */
+
 import { useState, useRef, useLayoutEffect, useEffect } from 'react';
 import {
   StyleSheet,
@@ -13,6 +19,8 @@ import {
   Platform,
   Modal,
   InteractionManager,
+  Animated,
+  Dimensions,
 } from 'react-native';
 import { supabase } from '../services/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -27,10 +35,13 @@ import { Video as VideoCompressor } from 'react-native-compressor';
 import { getFreeDiagnosis } from '../services/gemini';
 import VideoCompressionModal from '../components/VideoCompressionModal';
 import DiagnosisLoadingOverlay from '../components/DiagnosisLoadingOverlay';
+import HouseIcon from '../components/HouseIcon';
+
+const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 type RootStackParamList = {
   Home: undefined;
-  Diagnosis: { category: string };
+  Diagnosis: { category?: string };
   Results: {
     diagnosis: string;
     category: string;
@@ -45,6 +56,16 @@ type DiagnosisScreenProps = {
   route: RouteProp<RootStackParamList, 'Diagnosis'>;
 };
 
+// Categories matching HomeScreen
+const CATEGORIES = [
+  { name: 'Plumbing', emoji: '🚰', id: 'plumbing', gradient: ['#1E90FF', '#00CBA9'] as [string, string] },
+  { name: 'Electrical', emoji: '⚡', id: 'electrical', gradient: ['#FF6B35', '#FFA500'] as [string, string] },
+  { name: 'Appliances', emoji: '🔧', id: 'appliances', gradient: ['#00CBA9', '#1E90FF'] as [string, string] },
+  { name: 'HVAC', emoji: '❄️', id: 'hvac', gradient: ['#4A90E2', '#7B68EE'] as [string, string] },
+  { name: 'Automotive', emoji: '🚗', id: 'automotive', gradient: ['#FF6B35', '#E94B3C'] as [string, string] },
+  { name: 'Other', emoji: '❓', id: 'other', gradient: ['#1E90FF', '#00CBA9'] as [string, string] },
+];
+
 // Target size for compressed videos
 // Supabase Edge Functions have ~10MB request body limit
 // Base64 encoding adds ~33% overhead, so 6MB video = ~8MB base64 (safely under limit)
@@ -52,17 +73,23 @@ const TARGET_VIDEO_SIZE_MB = 6;
 const MAX_FILE_SIZE_BYTES = 7 * 1024 * 1024;
 
 export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenProps) {
-  const { category } = route.params;
+  // If category is passed via route, use it; otherwise start with category selection
+  const initialCategory = route.params?.category || null;
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(initialCategory);
   const [image, setImage] = useState<string | null>(null);
   const [video, setVideo] = useState<string | null>(null);
   const [description, setDescription] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [diagnosisComplete, setDiagnosisComplete] = useState(false); // For particle burst animation
+  const [diagnosisComplete, setDiagnosisComplete] = useState(false);
   const [showMediaSheet, setShowMediaSheet] = useState(false);
   const [isCompressing, setIsCompressing] = useState(false);
   const [compressionProgress, setCompressionProgress] = useState(0);
   const [compressionStatus, setCompressionStatus] = useState<'compressing' | 'complete' | 'error'>('compressing');
   const scrollViewRef = useRef<ScrollView>(null);
+
+  // Animation values
+  const fadeAnim = useRef(new Animated.Value(1)).current;
+  const slideAnim = useRef(new Animated.Value(0)).current;
 
 
   // Get a local file URI for iOS videos from Photos library
@@ -262,18 +289,61 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
   // Override back button to always show KanDu™
   useLayoutEffect(() => {
     navigation.setOptions({
+      title: 'Fix It',
+      headerStyle: {
+        backgroundColor: '#1E90FF',
+      },
       headerLeft: () => (
         <TouchableOpacity
-          onPress={() => navigation.goBack()}
+          onPress={() => {
+            // If category is selected and not passed via route, go back to category selection
+            if (selectedCategory && !initialCategory) {
+              animateTransition(() => setSelectedCategory(null));
+            } else {
+              navigation.goBack();
+            }
+          }}
           style={{ flexDirection: 'row', alignItems: 'center', marginLeft: -8 }}
           activeOpacity={0.7}
         >
           <Ionicons name="chevron-back" size={28} color="#ffffff" />
-          <Text style={{ color: '#ffffff', fontSize: 17 }}>KanDu™</Text>
+          <Text style={{ color: '#ffffff', fontSize: 17 }}>
+            {selectedCategory && !initialCategory ? 'Categories' : 'KanDu™'}
+          </Text>
         </TouchableOpacity>
       ),
     });
-  }, [navigation]);
+  }, [navigation, selectedCategory, initialCategory]);
+
+  const animateTransition = (callback: () => void) => {
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 0,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+      Animated.timing(slideAnim, {
+        toValue: -50,
+        duration: 150,
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      callback();
+      slideAnim.setValue(50);
+      Animated.parallel([
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+        Animated.timing(slideAnim, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    });
+  };
 
   const openMediaSheet = () => {
     setShowMediaSheet(true);
@@ -410,6 +480,11 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
 
 
   const analyzeProblem = async () => {
+    if (!selectedCategory) {
+      Alert.alert('Select Category', 'Please select a category first');
+      return;
+    }
+
     if (!image && !video && !description) {
       Alert.alert('Missing Information', 'Please add a photo, video, or description of the problem');
       return;
@@ -420,7 +495,7 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
 
     try {
       const diagnosis = await getFreeDiagnosis({
-        category,
+        category: selectedCategory,
         description,
         imageUri: image || undefined,
         videoUri: video || undefined,
@@ -430,7 +505,7 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
       // This way when the overlay fades out, Results is already there
       navigation.navigate('Results', {
         diagnosis: JSON.stringify(diagnosis),
-        category,
+        category: selectedCategory,
         description,
         imageUri: image || undefined,
         videoUri: video || undefined,
@@ -456,17 +531,97 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
     setDiagnosisComplete(false);
   };
 
-  const getCategoryEmoji = () => {
-    const emojis: Record<string, string> = {
-      appliances: '🔧',
-      hvac: '❄️',
-      plumbing: '🚰',
-      electrical: '⚡',
-      automotive: '🚗',
-      other: '🏠',
-    };
-    return emojis[category] || '🔧';
+  const handleCategorySelect = (categoryId: string) => {
+    animateTransition(() => setSelectedCategory(categoryId));
   };
+
+  const getCategoryInfo = () => {
+    return CATEGORIES.find(c => c.id === selectedCategory) || CATEGORIES[5]; // Default to 'other'
+  };
+
+  // Category Selection View
+  if (!selectedCategory) {
+    return (
+      <View style={styles.container}>
+        <Animated.ScrollView
+          style={[
+            styles.scrollView,
+            {
+              opacity: fadeAnim,
+              transform: [{ translateY: slideAnim }],
+            },
+          ]}
+          contentContainerStyle={styles.inputContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Hero Section */}
+          <LinearGradient
+            colors={['#1E90FF', '#00CBA9']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.heroSection}
+          >
+            <HouseIcon
+              icon="construct"
+              size={84}
+              gradientColors={['#ffffff', '#bae6fd', '#7dd3fc']}
+            />
+            <Text style={styles.heroTitle}>What needs fixing?</Text>
+            <Text style={styles.heroSubtitle}>
+              Select a category to get started
+            </Text>
+          </LinearGradient>
+
+          {/* Categories Grid */}
+          <View style={styles.categoriesSection}>
+            <Text style={styles.categoriesSectionTitle}>Select Category</Text>
+            <View style={styles.categoriesGrid}>
+              {CATEGORIES.map((category) => (
+                <TouchableOpacity
+                  key={category.id}
+                  style={styles.categoryCard}
+                  onPress={() => handleCategorySelect(category.id)}
+                  activeOpacity={0.7}
+                >
+                  <LinearGradient
+                    colors={category.gradient}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.categoryGradient}
+                  >
+                    <Text style={styles.categoryEmoji}>{category.emoji}</Text>
+                    <Text style={styles.categoryName}>{category.name}</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {/* Tips Section */}
+          <View style={styles.tipsSection}>
+            <Text style={styles.tipsSectionTitle}>Tips for Best Results</Text>
+            <View style={styles.tipItem}>
+              <Ionicons name="camera" size={20} color="#1E90FF" />
+              <Text style={styles.tipText}>Include a clear photo or video of the issue</Text>
+            </View>
+            <View style={styles.tipItem}>
+              <Ionicons name="mic" size={20} color="#1E90FF" />
+              <Text style={styles.tipText}>Record any unusual sounds (rattling, humming, etc.)</Text>
+            </View>
+            <View style={styles.tipItem}>
+              <Ionicons name="document-text" size={20} color="#1E90FF" />
+              <Text style={styles.tipText}>Describe when the problem started and any changes</Text>
+            </View>
+          </View>
+
+          <View style={{ height: 40 }} />
+        </Animated.ScrollView>
+      </View>
+    );
+  }
+
+  // Media Upload View (after category is selected)
+  const categoryInfo = getCategoryInfo();
 
   return (
     <KeyboardAvoidingView
@@ -474,132 +629,141 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 20}
     >
-      <ScrollView
+      <Animated.ScrollView
         ref={scrollViewRef}
-        style={styles.container}
-        contentContainerStyle={styles.contentContainer}
+        style={[
+          styles.scrollView,
+          {
+            opacity: fadeAnim,
+            transform: [{ translateY: slideAnim }],
+          },
+        ]}
+        contentContainerStyle={styles.uploadContent}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
-        {/* Header with Logo */}
-      <View style={styles.header}>
-        <Image
-          source={require('../assets/kandu-logo-only.png')}
-          style={styles.logo}
-          resizeMode="contain"
-        />
-        <View style={styles.headerText}>
-          <Text style={styles.emoji}>{getCategoryEmoji()}</Text>
-          <Text style={styles.title}>
-            {category.charAt(0).toUpperCase() + category.slice(1)}
+        {/* Header with Category */}
+        <LinearGradient
+          colors={categoryInfo.gradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.uploadHeader}
+        >
+          <HouseIcon
+            icon="construct"
+            size={72}
+            gradientColors={['#ffffff', '#bae6fd', '#7dd3fc']}
+          />
+          <View style={styles.headerTextRow}>
+            <Text style={styles.headerEmoji}>{categoryInfo.emoji}</Text>
+            <Text style={styles.headerTitle}>{categoryInfo.name}</Text>
+          </View>
+          <Text style={styles.headerSubtitle}>Show us what's wrong</Text>
+        </LinearGradient>
+
+        {/* Upload Section */}
+        <View style={styles.uploadSection}>
+          {image || video ? (
+            <View style={styles.previewContainer}>
+              {image ? (
+                <Image source={{ uri: image }} style={styles.mediaPreview} />
+              ) : video ? (
+                <Video
+                  source={{ uri: video }}
+                  style={styles.mediaPreview}
+                  useNativeControls
+                  resizeMode={ResizeMode.CONTAIN}
+                  isLooping
+                />
+              ) : null}
+              <View style={styles.previewActions}>
+                <TouchableOpacity
+                  style={styles.changeMediaButton}
+                  onPress={openMediaSheet}
+                >
+                  <Text style={styles.changeMediaText}>Change</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.removeButton}
+                  onPress={() => {
+                    setImage(null);
+                    setVideo(null);
+                  }}
+                >
+                  <Text style={styles.removeButtonText}>Remove</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={styles.addMediaButton}
+              onPress={openMediaSheet}
+              activeOpacity={0.7}
+            >
+              <View style={styles.addMediaGradient}>
+                <View style={styles.addMediaIconContainer}>
+                  <Ionicons name="add" size={32} color="#ffffff" />
+                </View>
+                <Text style={styles.addMediaTitle}>Add Photo or Video</Text>
+                <Text style={styles.addMediaSubtitle}>Tap to capture or upload</Text>
+              </View>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Description Section */}
+        <View style={styles.descriptionSection}>
+          <Text style={styles.sectionTitle}>Describe the Issue</Text>
+          <TextInput
+            style={styles.textInput}
+            placeholder="What's happening? Any sounds, smells, or when it started?"
+            placeholderTextColor="#94a3b8"
+            multiline
+            numberOfLines={5}
+            value={description}
+            onChangeText={setDescription}
+            textAlignVertical="top"
+            onFocus={() => {
+              // Scroll just enough to show the text input above keyboard
+              setTimeout(() => {
+                scrollViewRef.current?.scrollTo({ y: 300, animated: true });
+              }, 300);
+            }}
+          />
+          <Text style={styles.helperText}>
+            Tip: More details = better diagnosis!
           </Text>
         </View>
-        <Text style={styles.subtitle}>Show us what's wrong</Text>
-      </View>
 
-      {/* Upload Section */}
-      <View style={styles.uploadSection}>
-        {image || video ? (
-          <View style={styles.previewContainer}>
-            {image ? (
-              <Image source={{ uri: image }} style={styles.mediaPreview} />
-            ) : video ? (
-              <Video
-                source={{ uri: video }}
-                style={styles.mediaPreview}
-                useNativeControls
-                resizeMode={ResizeMode.CONTAIN}
-                isLooping
-              />
-            ) : null}
-            <View style={styles.previewActions}>
-              <TouchableOpacity
-                style={styles.changeMediaButton}
-                onPress={openMediaSheet}
-              >
-                <Text style={styles.changeMediaText}>Change</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.removeButton}
-                onPress={() => {
-                  setImage(null);
-                  setVideo(null);
-                }}
-              >
-                <Text style={styles.removeButtonText}>Remove</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        ) : (
-          <TouchableOpacity
-            style={styles.addMediaButton}
-            onPress={openMediaSheet}
-            activeOpacity={0.7}
-          >
-            <LinearGradient
-              colors={['rgba(30, 90, 168, 0.08)', 'rgba(30, 90, 168, 0.15)']}
-              style={styles.addMediaGradient}
-            >
-              <View style={styles.addMediaIconContainer}>
-                <Text style={styles.addMediaIcon}>+</Text>
-              </View>
-              <Text style={styles.addMediaTitle}>Add Photo or Video</Text>
-              <Text style={styles.addMediaSubtitle}>Tap to capture or upload</Text>
-            </LinearGradient>
-          </TouchableOpacity>
-        )}
-      </View>
-
-      {/* Description Section */}
-      <View style={styles.descriptionSection}>
-        <Text style={styles.sectionTitle}>✍️ Describe the Issue</Text>
-        <TextInput
-          style={styles.textInput}
-          placeholder="What's happening? Any sounds, smells, or when it started?"
-          placeholderTextColor="#94a3b8"
-          multiline
-          numberOfLines={5}
-          value={description}
-          onChangeText={setDescription}
-          textAlignVertical="top"
-          onFocus={() => {
-            // Scroll just enough to show the text input above keyboard
-            setTimeout(() => {
-              scrollViewRef.current?.scrollTo({ y: 200, animated: true });
-            }, 300);
-          }}
-        />
-        <Text style={styles.helperText}>
-          Tip: More details = better diagnosis!
-        </Text>
-      </View>
-
-      {/* Analyze Button */}
-      <TouchableOpacity
-        style={styles.analyzeButtonWrapper}
-        onPress={analyzeProblem}
-        disabled={isAnalyzing}
-        activeOpacity={0.8}
-      >
-        <LinearGradient
-          colors={isAnalyzing ? ['#9ca3af', '#9ca3af'] : ['#1E90FF', '#00CBA9']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={styles.analyzeButton}
+        {/* Analyze Button */}
+        <TouchableOpacity
+          style={styles.analyzeButtonWrapper}
+          onPress={analyzeProblem}
+          disabled={isAnalyzing}
+          activeOpacity={0.8}
         >
-          {isAnalyzing ? (
-            <>
-              <ActivityIndicator color="#ffffff" size="small" style={{ marginRight: 12 }} />
-              <Text style={styles.analyzeButtonText}>Analyzing...</Text>
-            </>
-          ) : (
-            <>
-              <Text style={styles.analyzeButtonText}>Get Free Diagnosis</Text>
-              <Text style={styles.analyzeButtonSubtext}>Powered by AI • ~30 seconds</Text>
-            </>
-          )}
-        </LinearGradient>
-      </TouchableOpacity>
-      </ScrollView>
+          <LinearGradient
+            colors={isAnalyzing ? ['#9ca3af', '#9ca3af'] : categoryInfo.gradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.analyzeButton}
+          >
+            {isAnalyzing ? (
+              <>
+                <ActivityIndicator color="#ffffff" size="small" style={{ marginRight: 12 }} />
+                <Text style={styles.analyzeButtonText}>Analyzing...</Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.analyzeButtonText}>Get Free Diagnosis</Text>
+                <Text style={styles.analyzeButtonSubtext}>Powered by AI</Text>
+              </>
+            )}
+          </LinearGradient>
+        </TouchableOpacity>
+
+        <View style={{ height: 40 }} />
+      </Animated.ScrollView>
 
       {/* Media Action Sheet */}
       <Modal
@@ -713,58 +877,163 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
 }
 
 const styles = StyleSheet.create({
-  keyboardAvoid: {
-    flex: 1,
-  },
   container: {
     flex: 1,
-    backgroundColor: '#F8FAFB',
+    backgroundColor: '#E8F4F8',
   },
-  contentContainer: {
-    padding: 20,
-    paddingTop: 16,
+  keyboardAvoid: {
+    flex: 1,
+    backgroundColor: '#E8F4F8',
   },
-  header: {
+  scrollView: {
+    flex: 1,
+  },
+  inputContent: {
+    paddingBottom: 20,
+  },
+  uploadContent: {
+    paddingBottom: 20,
+  },
+
+  // Hero Section
+  heroSection: {
     alignItems: 'center',
-    marginBottom: 28,
+    paddingVertical: 20,
+    paddingHorizontal: 20,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
   },
-  logo: {
-    width: 180,
-    height: 120,
-    marginBottom: -35,
-    marginTop: -30,
+  heroTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginTop: 8,
+    textAlign: 'center',
   },
-  headerText: {
+  heroSubtitle: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.9)',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+
+  // Categories Section
+  categoriesSection: {
+    paddingHorizontal: 20,
+    marginTop: 24,
+  },
+  categoriesSectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#1e293b',
+    marginBottom: 16,
+  },
+  categoriesGrid: {
     flexDirection: 'row',
-    alignItems: 'center',
+    flexWrap: 'wrap',
     gap: 12,
   },
-  emoji: {
+  categoryCard: {
+    width: (SCREEN_WIDTH - 52) / 2,
+    borderRadius: 16,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  categoryGradient: {
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  categoryEmoji: {
     fontSize: 40,
+    marginBottom: 8,
   },
-  title: {
-    fontSize: 32,
-    fontWeight: 'bold',
-    color: '#1E5AA8',
+  categoryName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#ffffff',
   },
-  subtitle: {
+
+  // Tips Section
+  tipsSection: {
+    marginHorizontal: 20,
+    marginTop: 24,
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  tipsSectionTitle: {
     fontSize: 16,
-    color: '#64748b',
-    marginTop: 8,
+    fontWeight: '600',
+    color: '#1e293b',
+    marginBottom: 16,
   },
+  tipItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+    gap: 12,
+  },
+  tipText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#64748b',
+    lineHeight: 20,
+  },
+
+  // Upload Header
+  uploadHeader: {
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+  },
+  headerTextRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 6,
+  },
+  headerEmoji: {
+    fontSize: 28,
+  },
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#ffffff',
+  },
+  headerSubtitle: {
+    fontSize: 14,
+    color: 'rgba(255, 255, 255, 0.9)',
+    marginTop: 4,
+  },
+
+  // Upload Section
   uploadSection: {
-    marginBottom: 24,
+    paddingHorizontal: 20,
+    marginTop: 24,
   },
   sectionTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#1E5AA8',
+    color: '#1e293b',
     marginBottom: 16,
   },
   addMediaButton: {
     borderRadius: 20,
     overflow: 'hidden',
-    shadowColor: '#1E5AA8',
+    backgroundColor: '#fff',
+    shadowColor: '#1E90FF',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.1,
     shadowRadius: 12,
@@ -776,33 +1045,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderRadius: 20,
     borderWidth: 2,
-    borderColor: 'rgba(30, 90, 168, 0.3)',
+    borderColor: 'rgba(30, 144, 255, 0.3)',
     borderStyle: 'dashed',
   },
   addMediaIconContainer: {
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: '#1E5AA8',
+    backgroundColor: '#1E90FF',
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
-    shadowColor: '#1E5AA8',
+    shadowColor: '#1E90FF',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
     elevation: 6,
   },
-  addMediaIcon: {
-    fontSize: 32,
-    color: '#ffffff',
-    fontWeight: '300',
-    marginTop: -2,
-  },
   addMediaTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#1E5AA8',
+    color: '#1E90FF',
     marginBottom: 4,
   },
   addMediaSubtitle: {
@@ -824,7 +1087,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   changeMediaButton: {
-    backgroundColor: '#1E5AA8',
+    backgroundColor: '#1E90FF',
     paddingHorizontal: 28,
     paddingVertical: 12,
     borderRadius: 12,
@@ -847,8 +1110,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 15,
   },
+
+  // Description Section
   descriptionSection: {
-    marginBottom: 24,
+    paddingHorizontal: 20,
+    marginTop: 24,
   },
   textInput: {
     backgroundColor: '#ffffff',
@@ -866,8 +1132,11 @@ const styles = StyleSheet.create({
     marginTop: 8,
     fontStyle: 'italic',
   },
+
+  // Analyze Button
   analyzeButtonWrapper: {
-    marginBottom: 32,
+    marginHorizontal: 20,
+    marginTop: 24,
     borderRadius: 16,
     shadowColor: '#1E90FF',
     shadowOffset: {
@@ -896,6 +1165,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
     opacity: 0.9,
   },
+
   // Action Sheet Styles
   sheetOverlay: {
     flex: 1,
@@ -933,7 +1203,7 @@ const styles = StyleSheet.create({
   sheetTitle: {
     fontSize: 22,
     fontWeight: 'bold',
-    color: '#1E5AA8',
+    color: '#1E90FF',
     textAlign: 'center',
     marginBottom: 24,
   },

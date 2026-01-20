@@ -35,41 +35,41 @@ interface ActionCard {
   label: string;
   subtext: string;
   gradient: [string, string];
-  route: keyof RootStackParamList | 'Diagnosis';
+  route: keyof RootStackParamList;
 }
 
 const ACTION_CARDS: ActionCard[] = [
   {
     id: 'fix',
     icon: 'construct',
-    label: 'Fix it',
-    subtext: 'Step-by-step guidance',
+    label: 'Fix It',
+    subtext: 'Diagnose & Repair',
     gradient: ['#1E90FF', '#00CBA9'],
-    route: 'Home',
-  },
-  {
-    id: 'diagnose',
-    icon: 'search',
-    label: 'Diagnose it',
-    subtext: "What's wrong?",
-    gradient: ['#00CBA9', '#1E90FF'],
     route: 'Diagnosis',
   },
   {
     id: 'learn',
-    icon: 'school',
-    label: 'Learn it',
-    subtext: 'Understand how it works',
+    icon: 'bulb',
+    label: 'Learn It',
+    subtext: 'How does it work?',
     gradient: ['#4A90E2', '#7B68EE'],
-    route: 'Home',
+    route: 'LearnIt',
+  },
+  {
+    id: 'plan',
+    icon: 'clipboard',
+    label: 'Plan It',
+    subtext: 'Project planning',
+    gradient: ['#00CBA9', '#1E90FF'],
+    route: 'PlanIt',
   },
   {
     id: 'do',
-    icon: 'rocket',
-    label: 'Do it',
-    subtext: 'Get help with a project',
+    icon: 'chatbubbles',
+    label: 'Do It',
+    subtext: 'AI home assistant',
     gradient: ['#FF6B35', '#FFA500'],
-    route: 'Home',
+    route: 'DoIt',
   },
 ];
 
@@ -145,7 +145,17 @@ export default function MainHomeScreen() {
   useLayoutEffect(() => {
     navigation.setOptions({
       headerShown: true,
-      title: 'KanDu™',
+      headerTitle: () => (
+        <View style={styles.headerTitleContainer}>
+          <Text style={styles.headerTitleItalic}>You  </Text>
+          <Text style={styles.headerTitleText}>KanD</Text>
+          <View style={styles.uWithTm}>
+            <Text style={styles.headerTitleText}>u</Text>
+            <Text style={styles.tmSymbol}>™</Text>
+          </View>
+          <Text style={styles.headerTitleItalic}>  It!</Text>
+        </View>
+      ),
       headerLeft: () => (
         <TouchableOpacity
           style={styles.headerMenuButton}
@@ -212,7 +222,7 @@ export default function MainHomeScreen() {
 
   const loadDailyTip = async () => {
     // Version the cache so OTA updates force a refresh
-    const TIPS_VERSION = 'v2'; // Bump this when tips change
+    const TIPS_VERSION = 'v3'; // Bump this when tips change
     const today = new Date().toDateString();
     const cacheKey = `dailyTips_${TIPS_VERSION}`;
     const dateKey = `dailyTipsDate_${TIPS_VERSION}`;
@@ -237,70 +247,70 @@ export default function MainHomeScreen() {
           description: 'Change your air filter in 5 minutes - breathe cleaner air and lower your energy bill.',
           category: 'DIY',
           icon: '❄️',
-          imageUrl: 'https://images.unsplash.com/photo-1581092580497-e0d23cbdf1dc?w=400&h=400&fit=crop',
+          imageUrl: 'https://images.unsplash.com/photo-1585771724684-38269d6639fd?w=400&h=400&fit=crop',
         },
         {
           title: 'Fix Leaky Faucet',
           description: 'Stop that annoying drip yourself - save water and money with a simple washer replacement.',
           category: 'DIY',
           icon: '🚰',
-          imageUrl: 'https://images.unsplash.com/photo-1585704032915-c3400ca199e7?w=400&h=400&fit=crop',
+          imageUrl: 'https://images.unsplash.com/photo-1584622650111-993a426fbf0a?w=400&h=400&fit=crop',
         },
         {
           title: 'Install Smart Outlet',
           description: 'Control your lights from your phone - no electrician needed, just 10 minutes.',
           category: 'DIY',
           icon: '⚡',
-          imageUrl: 'https://images.unsplash.com/photo-1558618666-fcd25c85cd64?w=400&h=400&fit=crop',
+          imageUrl: 'https://images.unsplash.com/photo-1545259741-2ea3ebf61fa3?w=400&h=400&fit=crop',
         },
         {
           title: 'Unclog Drain',
           description: 'Clear slow drains without harsh chemicals - simple tools get the job done fast.',
           category: 'DIY',
           icon: '🔧',
-          imageUrl: 'https://images.unsplash.com/photo-1607472586893-edb57bdc0e39?w=400&h=400&fit=crop',
+          imageUrl: 'https://images.unsplash.com/photo-1585704032915-c3400ca199e7?w=400&h=400&fit=crop',
         },
         {
           title: 'Caulk Bathtub',
           description: 'Seal gaps around your tub - prevent mold and water damage in one afternoon.',
           category: 'DIY',
           icon: '🛁',
-          imageUrl: 'https://images.unsplash.com/photo-1620626011761-996317b8d101?w=400&h=400&fit=crop',
+          imageUrl: 'https://images.unsplash.com/photo-1552321554-5fefe8c9ef14?w=400&h=400&fit=crop',
         },
         {
           title: 'Replace Doorknob',
           description: 'Upgrade old hardware yourself - modern locks installed in 15 minutes.',
           category: 'DIY',
           icon: '🚪',
-          imageUrl: 'https://images.unsplash.com/photo-1506976785307-8732e854ad03?w=400&h=400&fit=crop',
+          imageUrl: 'https://images.unsplash.com/photo-1558346648-9757f2fa4474?w=400&h=400&fit=crop',
         },
         {
           title: 'Patch Drywall',
           description: 'Fix holes in walls like a pro - smooth finish with basic supplies.',
           category: 'DIY',
           icon: '🏠',
-          imageUrl: 'https://images.unsplash.com/photo-1581858707511-0294aad0c9df?w=400&h=400&fit=crop',
+          imageUrl: 'https://images.unsplash.com/photo-1504307651254-35680f356dfd?w=400&h=400&fit=crop',
         },
         {
           title: 'Install Shelf',
           description: 'Mount floating shelves securely - add storage and style in 30 minutes.',
           category: 'DIY',
           icon: '📚',
-          imageUrl: 'https://images.unsplash.com/photo-1524758631624-e2822e304c36?w=400&h=400&fit=crop',
+          imageUrl: 'https://images.unsplash.com/photo-1595428774223-ef52624120d2?w=400&h=400&fit=crop',
         },
         {
           title: 'Replace Showerhead',
           description: 'Upgrade your shower experience - install a new head with just your hands.',
           category: 'DIY',
           icon: '🚿',
-          imageUrl: 'https://images.unsplash.com/photo-1620626011761-996317b8d101?w=400&h=400&fit=crop',
+          imageUrl: 'https://images.unsplash.com/photo-1564540586988-aa4e53c3d799?w=400&h=400&fit=crop',
         },
         {
           title: 'Clean Garbage Disposal',
           description: 'Freshen and sharpen blades - ice cubes and citrus do the trick.',
           category: 'DIY',
           icon: '🍋',
-          imageUrl: 'https://images.unsplash.com/photo-1585659722983-3a675dabf23d?w=400&h=400&fit=crop',
+          imageUrl: 'https://images.unsplash.com/photo-1556909114-f6e7ad7d3136?w=400&h=400&fit=crop',
         },
       ];
 
@@ -326,12 +336,12 @@ export default function MainHomeScreen() {
     }
   };
 
-  const handleCardPress = (route: keyof RootStackParamList | 'Diagnosis') => {
+  const handleCardPress = (route: keyof RootStackParamList) => {
     if (route === 'Diagnosis') {
-      navigation.navigate('Diagnosis', { category: 'other' });
+      // Navigate without category to show category selection screen
+      navigation.navigate('Diagnosis', {} as any);
     } else {
-      // @ts-ignore
-      navigation.navigate(route);
+      navigation.navigate(route as any);
     }
   };
 
@@ -433,11 +443,10 @@ export default function MainHomeScreen() {
         {/* Logo Section */}
         <View style={styles.logoSection}>
           <Image
-            source={require('../assets/kandu-logo-only.png')}
+            source={require('../assets/kandu-light-full.png')}
             style={styles.logo}
             resizeMode="contain"
           />
-          <Text style={styles.tagline}>You KanDu it!</Text>
         </View>
 
         {/* Main action cards - 2x2 grid */}
@@ -569,6 +578,32 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingTop: 20,
   },
+  headerTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+  },
+  headerTitleText: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  headerTitleItalic: {
+    fontSize: 22,
+    fontWeight: '700',
+    fontStyle: 'italic',
+    color: '#ffffff',
+  },
+  uWithTm: {
+    position: 'relative',
+  },
+  tmSymbol: {
+    position: 'absolute',
+    fontSize: 8,
+    fontWeight: '700',
+    color: '#ffffff',
+    top: 3,
+    right: -2,
+  },
   headerMenuButton: {
     padding: 4,
     marginLeft: 8,
@@ -678,20 +713,14 @@ const styles = StyleSheet.create({
   },
   logoSection: {
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 0,
+    marginTop: -40,
   },
   logo: {
-    width: 280,
-    height: 180,
+    width: 345,
+    height: 230,
     marginBottom: -50,
     marginTop: -30,
-  },
-  tagline: {
-    fontSize: 20,
-    color: '#64748b',
-    fontStyle: 'italic',
-    fontWeight: '500',
-    marginBottom: 24,
   },
   cardsContainer: {
     paddingHorizontal: 20,
@@ -911,14 +940,16 @@ const styles = StyleSheet.create({
   tipSquare: {
     width: '31.5%',
     aspectRatio: 1,
-    borderRadius: 12,
+    borderRadius: 14,
     overflow: 'hidden',
     backgroundColor: '#f1f5f9',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.8)',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 5,
   },
   tipSquareImage: {
     width: '100%',

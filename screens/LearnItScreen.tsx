@@ -19,7 +19,9 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import Svg, { Path } from 'react-native-svg';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../App';
 import { CameraView, useCameraPermissions } from 'expo-camera';
@@ -54,6 +56,7 @@ const POPULAR_CATEGORIES = [
 
 export default function LearnItScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<'input' | 'camera' | 'result'>('input');
   const [searchText, setSearchText] = useState('');
   const [loading, setLoading] = useState(false);
@@ -69,10 +72,7 @@ export default function LearnItScreen() {
 
   useLayoutEffect(() => {
     navigation.setOptions({
-      title: 'Learn It',
-      headerStyle: {
-        backgroundColor: '#4A90E2',
-      },
+      headerShown: false,
     });
   }, [navigation]);
 
@@ -337,34 +337,74 @@ IMPORTANT: Return ONLY valid JSON, no markdown formatting.`;
   // Result View
   if (mode === 'result' && result) {
     return (
-      <Animated.View
-        style={[
-          styles.container,
-          {
-            opacity: fadeAnim,
-            transform: [{ translateY: slideAnim }],
-          },
-        ]}
-      >
-        <ScrollView
-          style={styles.scrollView}
+      <View style={styles.container}>
+        {/* Hero Gradient Area */}
+        <LinearGradient
+          colors={['#0f172a', '#7B68EE', '#D4E8ED']}
+          start={{ x: 0.5, y: 0 }}
+          end={{ x: 0.5, y: 1 }}
+          style={[styles.heroGradient, { paddingTop: insets.top }]}
+        >
+          {/* Glass sheen overlay */}
+          <LinearGradient
+            pointerEvents="none"
+            colors={[
+              'rgba(255,255,255,0.35)',
+              'rgba(255,255,255,0.14)',
+              'rgba(255,255,255,0.00)',
+            ]}
+            locations={[0, 0.45, 1]}
+            start={{ x: 0.2, y: 0 }}
+            end={{ x: 0.8, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+
+          {/* Ghost checkmark watermark */}
+          <View style={styles.heroWatermark} pointerEvents="none">
+            <Svg width={800} height={400} viewBox="25 30 50 30">
+              <Path
+                d="M38 46 L46 54 L62 38"
+                fill="none"
+                stroke="rgba(255, 255, 255, 0.08)"
+                strokeWidth={6}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </Svg>
+          </View>
+
+          {/* Back Button */}
+          <TouchableOpacity
+            onPress={handleNewSearch}
+            style={styles.backButton}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="chevron-back" size={28} color="#ffffff" />
+            <Text style={styles.backButtonText}>Back</Text>
+          </TouchableOpacity>
+
+          {/* Hero Content */}
+          <View style={styles.heroContentCompact}>
+            <HouseIcon
+              icon="bulb"
+              size={64}
+              gradientColors={['#ffffff', '#e0e7ff', '#c7d2fe']}
+            />
+            <Text style={styles.heroTitleSmall}>{result.itemName}</Text>
+          </View>
+        </LinearGradient>
+
+        <Animated.ScrollView
+          style={[
+            styles.scrollView,
+            {
+              opacity: fadeAnim,
+              transform: [{ translateY: slideAnim }],
+            },
+          ]}
           contentContainerStyle={styles.resultContent}
           showsVerticalScrollIndicator={false}
         >
-          {/* Header */}
-          <LinearGradient
-            colors={['#4A90E2', '#7B68EE']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.resultHeader}
-          >
-            <HouseIcon
-              icon="bulb"
-              size={72}
-              gradientColors={['#ffffff', '#e0e7ff', '#c7d2fe']}
-            />
-            <Text style={styles.resultTitle}>{result.itemName}</Text>
-          </LinearGradient>
 
           {/* Overview */}
           <View style={styles.resultSection}>
@@ -469,8 +509,8 @@ IMPORTANT: Return ONLY valid JSON, no markdown formatting.`;
           </View>
 
           <View style={{ height: 40 }} />
-        </ScrollView>
-      </Animated.View>
+        </Animated.ScrollView>
+      </View>
     );
   }
 
@@ -480,6 +520,65 @@ IMPORTANT: Return ONLY valid JSON, no markdown formatting.`;
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
+      {/* Hero Gradient Area - Milky/airy gradient */}
+      <LinearGradient
+        colors={['#0f172a', '#7B68EE', '#D4E8ED']}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
+        style={[styles.heroGradient, { paddingTop: insets.top }]}
+      >
+        {/* Glass sheen overlay */}
+        <LinearGradient
+          pointerEvents="none"
+          colors={[
+            'rgba(255,255,255,0.35)',
+            'rgba(255,255,255,0.14)',
+            'rgba(255,255,255,0.00)',
+          ]}
+          locations={[0, 0.45, 1]}
+          start={{ x: 0.2, y: 0 }}
+          end={{ x: 0.8, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+
+        {/* Ghost checkmark watermark */}
+        <View style={styles.heroWatermark} pointerEvents="none">
+          <Svg width={800} height={400} viewBox="25 30 50 30">
+            <Path
+              d="M38 46 L46 54 L62 38"
+              fill="none"
+              stroke="rgba(255, 255, 255, 0.08)"
+              strokeWidth={6}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </Svg>
+        </View>
+
+        {/* Back Button */}
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backButton}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="chevron-back" size={28} color="#ffffff" />
+          <Text style={styles.backButtonText}>KanDu™</Text>
+        </TouchableOpacity>
+
+        {/* Hero Content */}
+        <View style={styles.heroContent}>
+          <HouseIcon
+            icon="bulb"
+            size={84}
+            gradientColors={['#ffffff', '#e0e7ff', '#c7d2fe']}
+          />
+          <Text style={styles.heroTitle}>How does it work?</Text>
+          <Text style={styles.heroSubtitle}>
+            Scan, type, or ask about anything in your home
+          </Text>
+        </View>
+      </LinearGradient>
+
       <Animated.ScrollView
         style={[
           styles.scrollView,
@@ -492,23 +591,6 @@ IMPORTANT: Return ONLY valid JSON, no markdown formatting.`;
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
-        {/* Hero Section */}
-        <LinearGradient
-          colors={['#4A90E2', '#7B68EE']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.heroSection}
-        >
-          <HouseIcon
-            icon="bulb"
-            size={84}
-            gradientColors={['#ffffff', '#e0e7ff', '#c7d2fe']}
-          />
-          <Text style={styles.heroTitle}>How does it work?</Text>
-          <Text style={styles.heroSubtitle}>
-            Scan, type, or ask about anything in your home
-          </Text>
-        </LinearGradient>
 
         {/* Search Input */}
         <View style={styles.searchSection}>
@@ -626,30 +708,66 @@ IMPORTANT: Return ONLY valid JSON, no markdown formatting.`;
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#E8F4F8',
+    backgroundColor: '#D4E8ED',
   },
   scrollView: {
     flex: 1,
   },
   inputContent: {
     paddingBottom: 20,
+    paddingTop: 20,
   },
   resultContent: {
     paddingBottom: 20,
+    paddingTop: 20,
   },
 
-  // Hero Section
-  heroSection: {
+  // Hero Gradient (MainHomeScreen style)
+  heroGradient: {
+    paddingBottom: 20,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  heroWatermark: {
+    position: 'absolute',
+    top: 20,
+    right: -270,
+    bottom: 0,
     alignItems: 'center',
-    paddingVertical: 20,
+    justifyContent: 'center',
+  },
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  backButtonText: {
+    color: '#ffffff',
+    fontSize: 17,
+    fontWeight: '500',
+  },
+  heroContent: {
+    alignItems: 'center',
+    paddingVertical: 16,
     paddingHorizontal: 20,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
+  },
+  heroContentCompact: {
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
   },
   heroTitle: {
     fontSize: 24,
     fontWeight: 'bold',
     color: '#fff',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  heroTitleSmall: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#ffffff',
     marginTop: 8,
     textAlign: 'center',
   },
@@ -663,7 +781,7 @@ const styles = StyleSheet.create({
   // Search Section
   searchSection: {
     paddingHorizontal: 20,
-    marginTop: -15,
+    marginTop: 0,
   },
   searchInputContainer: {
     flexDirection: 'row',
@@ -754,9 +872,9 @@ const styles = StyleSheet.create({
     marginTop: 32,
   },
   categoriesSectionTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
-    color: '#1e293b',
+    color: '#1E5AA8',
     marginBottom: 16,
   },
   categoriesGrid: {
@@ -930,20 +1048,6 @@ const styles = StyleSheet.create({
   },
 
   // Result Styles
-  resultHeader: {
-    alignItems: 'center',
-    paddingVertical: 20,
-    paddingHorizontal: 20,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-  },
-  resultTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginTop: 8,
-    textAlign: 'center',
-  },
   resultSection: {
     backgroundColor: '#fff',
     marginHorizontal: 20,
@@ -965,7 +1069,7 @@ const styles = StyleSheet.create({
   resultSectionTitle: {
     fontSize: 18,
     fontWeight: 'bold',
-    color: '#1e293b',
+    color: '#1E5AA8',
   },
   resultOverview: {
     fontSize: 16,

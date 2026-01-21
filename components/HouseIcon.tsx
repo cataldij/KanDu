@@ -26,9 +26,9 @@ export default function HouseIcon({
   const iconSize = size * 0.35;
 
   return (
-    <View style={[styles.container, { width: size, height: size }]}>
+    <View style={[styles.container, { width: size, height: size * 1.08 }]}>
       {/* House outline SVG - EXACT path from AnimatedLogo (without checkmark) */}
-      <Svg width={size} height={size} viewBox="0 0 100 100" style={styles.svg}>
+      <Svg width={size} height={size * 1.08} viewBox="0 0 100 100" style={styles.svg}>
         <Defs>
           <SvgLinearGradient id="houseGradient" x1="0%" y1="0%" x2="100%" y2="100%">
             <Stop offset="0%" stopColor={gradientColors[0]} />
@@ -80,6 +80,6 @@ const styles = StyleSheet.create({
   iconContainer: {
     alignItems: 'center',
     justifyContent: 'center',
-    marginTop: -8, // Offset to center icon in house body (above the speech bubble tail)
+    marginTop: -5, // Offset to center icon in house body (above the speech bubble tail)
   },
 });

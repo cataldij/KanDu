@@ -19,7 +19,9 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import Svg, { Path } from 'react-native-svg';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../App';
 import { GoogleGenerativeAI } from '@google/generative-ai';
@@ -59,6 +61,7 @@ const SUGGESTED_PROMPTS = [
 
 export default function DoItScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [loading, setLoading] = useState(false);
@@ -67,10 +70,7 @@ export default function DoItScreen() {
 
   useLayoutEffect(() => {
     navigation.setOptions({
-      title: 'Do It',
-      headerStyle: {
-        backgroundColor: '#FF6B35',
-      },
+      headerShown: false,
     });
   }, [navigation]);
 
@@ -231,22 +231,63 @@ Important: You're chatting with a homeowner who may be stressed about a home iss
   // Empty state / Welcome screen
   const renderWelcome = () => (
     <View style={styles.welcomeContainer}>
-      {/* Hero */}
+      {/* Hero Gradient Area - Milky/airy gradient */}
       <LinearGradient
-        colors={['#FF6B35', '#FFA500']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.heroSection}
+        colors={['#0f172a', '#FF8B5E', '#D4E8ED']}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
+        style={[styles.heroGradient, { paddingTop: insets.top }]}
       >
-        <HouseIcon
-          icon="chatbubbles"
-          size={84}
-          gradientColors={['#ffffff', '#fed7aa', '#fdba74']}
+        {/* Glass sheen overlay */}
+        <LinearGradient
+          pointerEvents="none"
+          colors={[
+            'rgba(255,255,255,0.35)',
+            'rgba(255,255,255,0.14)',
+            'rgba(255,255,255,0.00)',
+          ]}
+          locations={[0, 0.45, 1]}
+          start={{ x: 0.2, y: 0 }}
+          end={{ x: 0.8, y: 1 }}
+          style={StyleSheet.absoluteFill}
         />
-        <Text style={styles.heroTitle}>Hey there!</Text>
-        <Text style={styles.heroSubtitle}>
-          I'm KanDu, your AI home assistant. Ask me anything about home improvement!
-        </Text>
+
+        {/* Ghost checkmark watermark */}
+        <View style={styles.heroWatermark} pointerEvents="none">
+          <Svg width={800} height={400} viewBox="25 30 50 30">
+            <Path
+              d="M38 46 L46 54 L62 38"
+              fill="none"
+              stroke="rgba(255, 255, 255, 0.08)"
+              strokeWidth={6}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </Svg>
+        </View>
+
+        {/* Back Button */}
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backButton}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="chevron-back" size={28} color="#ffffff" />
+          <Text style={styles.backButtonText}>KanDu™</Text>
+        </TouchableOpacity>
+
+        {/* Hero Content */}
+        <View style={styles.heroContent}>
+          <HouseIcon
+            icon="chatbubbles"
+            size={84}
+            gradientColors={['#ffffff', '#fed7aa', '#fdba74']}
+          />
+          <Text style={styles.heroTitle}>Hey there!</Text>
+          <Text style={styles.heroSubtitle}>
+            I'm KanDu, your AI home assistant. Ask me anything about home improvement!
+          </Text>
+        </View>
       </LinearGradient>
 
       {/* Quick Actions */}
@@ -295,29 +336,68 @@ Important: You're chatting with a homeowner who may be stressed about a home iss
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
     >
-      <ScrollView
-        ref={scrollViewRef}
-        style={styles.scrollView}
-        contentContainerStyle={[
-          styles.scrollContent,
-          messages.length === 0 && styles.welcomeScrollContent,
-        ]}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-      >
-        {messages.length === 0 ? (
-          renderWelcome()
-        ) : (
-          <>
+      {/* Always show Welcome/Hero when no messages */}
+      {messages.length === 0 ? (
+        <ScrollView
+          ref={scrollViewRef}
+          style={styles.scrollView}
+          contentContainerStyle={styles.welcomeScrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {renderWelcome()}
+        </ScrollView>
+      ) : (
+        <>
+          {/* Mini Hero for Chat Mode */}
+          <LinearGradient
+            colors={['#0f172a', '#FF8B5E', '#D4E8ED']}
+            start={{ x: 0.5, y: 0 }}
+            end={{ x: 0.5, y: 1 }}
+            style={[styles.chatHeroGradient, { paddingTop: insets.top }]}
+          >
+            {/* Glass sheen overlay */}
+            <LinearGradient
+              pointerEvents="none"
+              colors={[
+                'rgba(255,255,255,0.35)',
+                'rgba(255,255,255,0.14)',
+                'rgba(255,255,255,0.00)',
+              ]}
+              locations={[0, 0.45, 1]}
+              start={{ x: 0.2, y: 0 }}
+              end={{ x: 0.8, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+
+            {/* Back Button */}
+            <TouchableOpacity
+              onPress={() => navigation.goBack()}
+              style={styles.backButton}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="chevron-back" size={28} color="#ffffff" />
+              <Text style={styles.backButtonText}>KanDu™</Text>
+            </TouchableOpacity>
+
             {/* Chat Header */}
-            <View style={styles.chatHeader}>
+            <View style={styles.chatHeaderRow}>
               <View style={styles.chatHeaderIcon}>
                 <Text style={styles.chatHeaderEmoji}>🏠</Text>
               </View>
               <Text style={styles.chatHeaderTitle}>KanDu Assistant</Text>
             </View>
+          </LinearGradient>
+
+          <ScrollView
+            ref={scrollViewRef}
+            style={styles.scrollView}
+            contentContainerStyle={styles.scrollContent}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+          >
 
             {/* Messages */}
             {messages.map(renderMessage)}
@@ -358,9 +438,9 @@ Important: You're chatting with a homeowner who may be stressed about a home iss
                 </ScrollView>
               </View>
             )}
-          </>
-        )}
-      </ScrollView>
+          </ScrollView>
+        </>
+      )}
 
       {/* Input Area */}
       <View style={styles.inputContainer}>
@@ -399,13 +479,14 @@ Important: You're chatting with a homeowner who may be stressed about a home iss
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#E8F4F8',
+    backgroundColor: '#D4E8ED',
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
     paddingBottom: 20,
+    paddingTop: 16,
   },
   welcomeScrollContent: {
     flexGrow: 1,
@@ -415,24 +496,41 @@ const styles = StyleSheet.create({
   welcomeContainer: {
     flex: 1,
   },
-  heroSection: {
-    alignItems: 'center',
-    paddingVertical: 20,
-    paddingHorizontal: 20,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
+
+  // Hero Gradient (MainHomeScreen style)
+  heroGradient: {
+    paddingBottom: 20,
+    position: 'relative',
+    overflow: 'hidden',
   },
-  heroIcon: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+  chatHeroGradient: {
+    paddingBottom: 12,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  heroWatermark: {
+    position: 'absolute',
+    top: 20,
+    right: -270,
+    bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 8,
   },
-  heroEmoji: {
-    fontSize: 32,
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  backButtonText: {
+    color: '#ffffff',
+    fontSize: 17,
+    fontWeight: '500',
+  },
+  heroContent: {
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
   },
   heroTitle: {
     fontSize: 24,
@@ -447,6 +545,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
   },
+  chatHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 8,
+    gap: 8,
+  },
 
   // Quick Actions
   quickActionsSection: {
@@ -454,9 +559,9 @@ const styles = StyleSheet.create({
     marginTop: 24,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
-    color: '#1e293b',
+    color: '#1E5AA8',
     marginBottom: 16,
   },
   quickActionsGrid: {
@@ -516,15 +621,6 @@ const styles = StyleSheet.create({
   },
 
   // Chat Header
-  chatHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 16,
-    gap: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#e2e8f0',
-    backgroundColor: '#fff',
-  },
   chatHeaderIcon: {
     width: 40,
     height: 40,
@@ -539,7 +635,7 @@ const styles = StyleSheet.create({
   chatHeaderTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#1e293b',
+    color: '#ffffff',
   },
 
   // Messages

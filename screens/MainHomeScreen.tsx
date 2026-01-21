@@ -20,12 +20,15 @@ import {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
+import Svg, { Path } from 'react-native-svg';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../App';
 import { supabase } from '../services/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import ProfileMenu from '../components/ProfileMenu';
+import HouseIcon from '../components/HouseIcon';
 import {
   SavedDiagnosis,
   getCategoryInfo,
@@ -46,13 +49,14 @@ interface ActionCard {
   route: keyof RootStackParamList;
 }
 
+// Milkier gradient colors - softer, less saturated for premium airy look
 const ACTION_CARDS: ActionCard[] = [
   {
     id: 'fix',
     icon: 'construct',
     label: 'Fix It',
     subtext: 'Diagnose & Repair',
-    gradient: ['#1E90FF', '#00CBA9'],
+    gradient: ['#4FA3FF', '#3AD7C3'], // Softened blue → teal
     route: 'Diagnosis',
   },
   {
@@ -60,7 +64,7 @@ const ACTION_CARDS: ActionCard[] = [
     icon: 'bulb',
     label: 'Learn It',
     subtext: 'How does it work?',
-    gradient: ['#4A90E2', '#7B68EE'],
+    gradient: ['#6BA3E8', '#9B8AF5'], // Softened blue → purple
     route: 'LearnIt',
   },
   {
@@ -68,7 +72,7 @@ const ACTION_CARDS: ActionCard[] = [
     icon: 'clipboard',
     label: 'Plan It',
     subtext: 'Project planning',
-    gradient: ['#00CBA9', '#1E90FF'],
+    gradient: ['#3AD7C3', '#4FA3FF'], // Softened teal → blue
     route: 'PlanIt',
   },
   {
@@ -76,7 +80,7 @@ const ACTION_CARDS: ActionCard[] = [
     icon: 'chatbubbles',
     label: 'Do It',
     subtext: 'AI home assistant',
-    gradient: ['#FF6B35', '#FFA500'],
+    gradient: ['#FF8B5E', '#FFB84D'], // Softened orange → yellow
     route: 'DoIt',
   },
 ];
@@ -143,6 +147,11 @@ interface DailyTip {
 export default function MainHomeScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
+
+  // Get user's first name for welcome message
+  const fullName = user?.user_metadata?.full_name || '';
+  const firstName = fullName.split(' ')[0] || 'Friend';
   const [menuVisible, setMenuVisible] = useState(false);
   const [inProgressItems, setInProgressItems] = useState<SavedDiagnosis[]>([]);
   const [dueFollowUps, setDueFollowUps] = useState<SavedDiagnosis[]>([]);
@@ -158,46 +167,12 @@ export default function MainHomeScreen() {
   const tileWidth = (SCREEN_WIDTH - (gridPadding * 2) - (gridGap * 2)) / 3;
   const pageWidth = SCREEN_WIDTH - (gridPadding * 2);
 
-  // Set up header with menu and notifications
+  // Disable the default navigation header - we use a custom hero header instead
   useLayoutEffect(() => {
     navigation.setOptions({
-      headerShown: true,
-      headerTitle: () => (
-        <View style={styles.headerTitleContainer}>
-          <Text style={styles.headerTitleItalic}>You  </Text>
-          <Text style={styles.headerTitleText}>KanD</Text>
-          <View style={styles.uWithTm}>
-            <Text style={styles.headerTitleText}>u</Text>
-            <Text style={styles.tmSymbol}>™</Text>
-          </View>
-          <Text style={styles.headerTitleItalic}>  It!</Text>
-        </View>
-      ),
-      headerLeft: () => (
-        <TouchableOpacity
-          style={styles.headerMenuButton}
-          onPress={() => setMenuVisible(true)}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="menu" size={28} color="#ffffff" />
-        </TouchableOpacity>
-      ),
-      headerRight: () => (
-        <TouchableOpacity
-          style={styles.headerNotificationButton}
-          onPress={() => setNotificationListVisible(true)}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="notifications-outline" size={26} color="#ffffff" />
-          {dueFollowUps.length > 0 && (
-            <View style={styles.notificationBadge}>
-              <Text style={styles.notificationBadgeText}>{dueFollowUps.length}</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      ),
+      headerShown: false,
     });
-  }, [navigation, dueFollowUps]);
+  }, [navigation]);
 
   // Load data when screen focuses
   useFocusEffect(
@@ -476,6 +451,79 @@ export default function MainHomeScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Hero Gradient Area - Milky/airy gradient that fades into the background */}
+      <LinearGradient
+        colors={['#0f172a', '#6A9BD6', '#D4E8ED']}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
+        style={[styles.heroGradient, { paddingTop: insets.top }]}
+      >
+        {/* Glass sheen overlay - creates frosted glass effect */}
+        <LinearGradient
+          pointerEvents="none"
+          colors={[
+            'rgba(255,255,255,0.35)',
+            'rgba(255,255,255,0.14)',
+            'rgba(255,255,255,0.00)',
+          ]}
+          locations={[0, 0.45, 1]}
+          start={{ x: 0.2, y: 0 }}
+          end={{ x: 0.8, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+
+        {/* Ghost checkmark watermark (KanDu brand SVG) - centered, full size */}
+        <View style={styles.heroWatermark} pointerEvents="none">
+          <Svg width={800} height={400} viewBox="25 30 50 30">
+            <Path
+              d="M38 46 L46 54 L62 38"
+              fill="none"
+              stroke="rgba(255, 255, 255, 0.08)"
+              strokeWidth={6}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </Svg>
+        </View>
+
+        {/* Floating controls: house menu + welcome left, notifications right */}
+        <View style={styles.heroControls}>
+          <View style={styles.menuAndWelcome}>
+            <TouchableOpacity
+              onPress={() => setMenuVisible(true)}
+              activeOpacity={0.7}
+            >
+              <HouseIcon
+                icon="menu"
+                iconColor="#ffffff"
+                size={56}
+                gradientColors={['#ffffff', '#e0e7ff', '#c7d2fe']}
+              />
+            </TouchableOpacity>
+
+            {/* Welcome Message - next to menu */}
+            <View style={styles.welcomeContainer}>
+              <Text style={styles.welcomeText}>Welcome, {firstName}</Text>
+              <Text style={styles.welcomeTagline}>You KanDu it!</Text>
+            </View>
+          </View>
+
+          <TouchableOpacity
+            style={styles.heroIconButton}
+            onPress={() => setNotificationListVisible(true)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="notifications-outline" size={26} color="#ffffff" />
+            {dueFollowUps.length > 0 && (
+              <View style={styles.notificationBadge}>
+                <Text style={styles.notificationBadgeText}>{dueFollowUps.length}</Text>
+              </View>
+            )}
+          </TouchableOpacity>
+        </View>
+      </LinearGradient>
+
+
       {/* Profile Menu */}
       <ProfileMenu
         visible={menuVisible}
@@ -550,15 +598,6 @@ export default function MainHomeScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {/* Logo Section */}
-        <View style={styles.logoSection}>
-          <Image
-            source={require('../assets/kandu-light-full.png')}
-            style={styles.logo}
-            resizeMode="contain"
-          />
-        </View>
-
         {/* Main action cards - 2x2 grid */}
         <View style={styles.cardsContainer}>
           <View style={styles.cardsGrid}>
@@ -575,6 +614,31 @@ export default function MainHomeScreen() {
                   end={{ x: 1, y: 1 }}
                   style={styles.card}
                 >
+                  {/* Checkmark watermark - KanDu style, bottom-right, partially clipped */}
+                  <View style={styles.cardCheckmarkWatermark} pointerEvents="none">
+                    <Svg width={200} height={200} viewBox="0 0 100 100">
+                      <Path
+                        d="M25 50 L40 65 L75 30"
+                        fill="none"
+                        stroke="rgba(255, 255, 255, 0.08)"
+                        strokeWidth={18}
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </Svg>
+                  </View>
+                  {/* Glass sheen overlay */}
+                  <LinearGradient
+                    colors={[
+                      'rgba(255,255,255,0.3)',
+                      'rgba(255,255,255,0.1)',
+                      'rgba(255,255,255,0)',
+                    ]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={StyleSheet.absoluteFill}
+                    pointerEvents="none"
+                  />
                   <Ionicons name={card.icon} size={40} color="#FFFFFF" />
                   <Text style={styles.cardLabel}>{card.label}</Text>
                   <Text style={styles.cardSubtext}>{card.subtext}</Text>
@@ -690,13 +754,38 @@ export default function MainHomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#E8F4F8',
+    backgroundColor: '#D4E8ED',
+  },
+  heroGradient: {
+    paddingBottom: 110,
+    marginTop: -8,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  heroControls: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  heroIconButton: {
+    padding: 8,
+    position: 'relative',
+  },
+  heroWatermark: {
+    position: 'absolute',
+    top: 20,
+    right: -270,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    paddingTop: 20,
+    paddingTop: 0,
   },
   headerTitleContainer: {
     flexDirection: 'row',
@@ -831,16 +920,27 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#64748b',
   },
-  logoSection: {
+  menuAndWelcome: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 0,
-    marginTop: -40,
+    gap: 12,
   },
-  logo: {
-    width: 345,
-    height: 230,
-    marginBottom: -50,
-    marginTop: -30,
+  welcomeContainer: {
+    justifyContent: 'center',
+  },
+  welcomeText: {
+    fontSize: 18,
+    fontWeight: '400',
+    color: '#ffffff',
+    letterSpacing: 0.3,
+  },
+  welcomeTagline: {
+    fontSize: 15,
+    fontWeight: '300',
+    color: 'rgba(255, 255, 255, 0.85)',
+    marginTop: 2,
+    paddingLeft: 12,
+    fontStyle: 'italic',
   },
   cardsContainer: {
     paddingHorizontal: 20,
@@ -871,6 +971,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 16,
+    overflow: 'hidden',
+  },
+  cardCheckmarkWatermark: {
+    position: 'absolute',
+    right: -25,
+    bottom: -45,
   },
   cardLabel: {
     fontSize: 18,

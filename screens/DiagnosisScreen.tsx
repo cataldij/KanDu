@@ -26,8 +26,10 @@ import { supabase } from '../services/supabase';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Video, ResizeMode } from 'expo-av';
 import { Ionicons } from '@expo/vector-icons';
+import Svg, { Path } from 'react-native-svg';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RouteProp } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as MediaLibrary from 'expo-media-library';
@@ -73,6 +75,7 @@ const TARGET_VIDEO_SIZE_MB = 6;
 const MAX_FILE_SIZE_BYTES = 7 * 1024 * 1024;
 
 export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenProps) {
+  const insets = useSafeAreaInsets();
   // If category is passed via route, use it; otherwise start with category selection
   const initialCategory = route.params?.category || null;
   const [selectedCategory, setSelectedCategory] = useState<string | null>(initialCategory);
@@ -286,34 +289,12 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
     }
   };
 
-  // Override back button to always show KanDu™
+  // Hide the default header - we use a custom hero header
   useLayoutEffect(() => {
     navigation.setOptions({
-      title: 'Fix It',
-      headerStyle: {
-        backgroundColor: '#1E90FF',
-      },
-      headerLeft: () => (
-        <TouchableOpacity
-          onPress={() => {
-            // If category is selected and not passed via route, go back to category selection
-            if (selectedCategory && !initialCategory) {
-              animateTransition(() => setSelectedCategory(null));
-            } else {
-              navigation.goBack();
-            }
-          }}
-          style={{ flexDirection: 'row', alignItems: 'center', marginLeft: -8 }}
-          activeOpacity={0.7}
-        >
-          <Ionicons name="chevron-back" size={28} color="#ffffff" />
-          <Text style={{ color: '#ffffff', fontSize: 17 }}>
-            {selectedCategory && !initialCategory ? 'Categories' : 'KanDu™'}
-          </Text>
-        </TouchableOpacity>
-      ),
+      headerShown: false,
     });
-  }, [navigation, selectedCategory, initialCategory]);
+  }, [navigation]);
 
   const animateTransition = (callback: () => void) => {
     Animated.parallel([
@@ -543,6 +524,65 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
   if (!selectedCategory) {
     return (
       <View style={styles.container}>
+        {/* Hero Gradient Area - Milky/airy gradient matching MainHomeScreen */}
+        <LinearGradient
+          colors={['#0f172a', '#4FA3FF', '#D4E8ED']}
+          start={{ x: 0.5, y: 0 }}
+          end={{ x: 0.5, y: 1 }}
+          style={[styles.heroGradient, { paddingTop: insets.top }]}
+        >
+          {/* Glass sheen overlay */}
+          <LinearGradient
+            pointerEvents="none"
+            colors={[
+              'rgba(255,255,255,0.35)',
+              'rgba(255,255,255,0.14)',
+              'rgba(255,255,255,0.00)',
+            ]}
+            locations={[0, 0.45, 1]}
+            start={{ x: 0.2, y: 0 }}
+            end={{ x: 0.8, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+
+          {/* Ghost checkmark watermark */}
+          <View style={styles.heroWatermark} pointerEvents="none">
+            <Svg width={800} height={400} viewBox="25 30 50 30">
+              <Path
+                d="M38 46 L46 54 L62 38"
+                fill="none"
+                stroke="rgba(255, 255, 255, 0.08)"
+                strokeWidth={6}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </Svg>
+          </View>
+
+          {/* Back Button */}
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.backButton}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="chevron-back" size={28} color="#ffffff" />
+            <Text style={styles.backButtonText}>KanDu™</Text>
+          </TouchableOpacity>
+
+          {/* Hero Content */}
+          <View style={styles.heroContent}>
+            <HouseIcon
+              icon="construct"
+              size={84}
+              gradientColors={['#ffffff', '#bae6fd', '#7dd3fc']}
+            />
+            <Text style={styles.heroTitle}>What needs fixing?</Text>
+            <Text style={styles.heroSubtitle}>
+              Select a category to get started
+            </Text>
+          </View>
+        </LinearGradient>
+
         <Animated.ScrollView
           style={[
             styles.scrollView,
@@ -554,23 +594,6 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
           contentContainerStyle={styles.inputContent}
           showsVerticalScrollIndicator={false}
         >
-          {/* Hero Section */}
-          <LinearGradient
-            colors={['#1E90FF', '#00CBA9']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.heroSection}
-          >
-            <HouseIcon
-              icon="construct"
-              size={84}
-              gradientColors={['#ffffff', '#bae6fd', '#7dd3fc']}
-            />
-            <Text style={styles.heroTitle}>What needs fixing?</Text>
-            <Text style={styles.heroSubtitle}>
-              Select a category to get started
-            </Text>
-          </LinearGradient>
 
           {/* Categories Grid */}
           <View style={styles.categoriesSection}>
@@ -581,7 +604,7 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
                   key={category.id}
                   style={styles.categoryCard}
                   onPress={() => handleCategorySelect(category.id)}
-                  activeOpacity={0.7}
+                  activeOpacity={0.8}
                 >
                   <LinearGradient
                     colors={category.gradient}
@@ -589,6 +612,31 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
                     end={{ x: 1, y: 1 }}
                     style={styles.categoryGradient}
                   >
+                    {/* Checkmark watermark */}
+                    <View style={styles.cardCheckmarkWatermark} pointerEvents="none">
+                      <Svg width={200} height={200} viewBox="0 0 100 100">
+                        <Path
+                          d="M25 50 L40 65 L75 30"
+                          fill="none"
+                          stroke="rgba(255, 255, 255, 0.08)"
+                          strokeWidth={18}
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </Svg>
+                    </View>
+                    {/* Glass sheen overlay */}
+                    <LinearGradient
+                      colors={[
+                        'rgba(255,255,255,0.3)',
+                        'rgba(255,255,255,0.1)',
+                        'rgba(255,255,255,0)',
+                      ]}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={StyleSheet.absoluteFill}
+                      pointerEvents="none"
+                    />
                     <Text style={styles.categoryEmoji}>{category.emoji}</Text>
                     <Text style={styles.categoryName}>{category.name}</Text>
                   </LinearGradient>
@@ -627,8 +675,76 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
     <KeyboardAvoidingView
       style={styles.keyboardAvoid}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 100 : 20}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
     >
+      {/* Hero Gradient Area - Uses category-specific colors */}
+      <LinearGradient
+        colors={['#0f172a', categoryInfo.gradient[0], '#D4E8ED']}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
+        style={[styles.heroGradient, { paddingTop: insets.top }]}
+      >
+        {/* Glass sheen overlay */}
+        <LinearGradient
+          pointerEvents="none"
+          colors={[
+            'rgba(255,255,255,0.35)',
+            'rgba(255,255,255,0.14)',
+            'rgba(255,255,255,0.00)',
+          ]}
+          locations={[0, 0.45, 1]}
+          start={{ x: 0.2, y: 0 }}
+          end={{ x: 0.8, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+
+        {/* Ghost checkmark watermark */}
+        <View style={styles.heroWatermark} pointerEvents="none">
+          <Svg width={800} height={400} viewBox="25 30 50 30">
+            <Path
+              d="M38 46 L46 54 L62 38"
+              fill="none"
+              stroke="rgba(255, 255, 255, 0.08)"
+              strokeWidth={6}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </Svg>
+        </View>
+
+        {/* Back Button */}
+        <TouchableOpacity
+          onPress={() => {
+            if (!initialCategory) {
+              animateTransition(() => setSelectedCategory(null));
+            } else {
+              navigation.goBack();
+            }
+          }}
+          style={styles.backButton}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="chevron-back" size={28} color="#ffffff" />
+          <Text style={styles.backButtonText}>
+            {!initialCategory ? 'Categories' : 'KanDu™'}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Hero Content */}
+        <View style={styles.heroContentCompact}>
+          <HouseIcon
+            icon="construct"
+            size={64}
+            gradientColors={['#ffffff', '#bae6fd', '#7dd3fc']}
+          />
+          <View style={styles.heroTextRow}>
+            <Text style={styles.heroEmoji}>{categoryInfo.emoji}</Text>
+            <Text style={styles.heroTitleSmall}>{categoryInfo.name}</Text>
+          </View>
+          <Text style={styles.heroSubtitle}>Show us what's wrong</Text>
+        </View>
+      </LinearGradient>
+
       <Animated.ScrollView
         ref={scrollViewRef}
         style={[
@@ -642,24 +758,6 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
-        {/* Header with Category */}
-        <LinearGradient
-          colors={categoryInfo.gradient}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.uploadHeader}
-        >
-          <HouseIcon
-            icon="construct"
-            size={72}
-            gradientColors={['#ffffff', '#bae6fd', '#7dd3fc']}
-          />
-          <View style={styles.headerTextRow}>
-            <Text style={styles.headerEmoji}>{categoryInfo.emoji}</Text>
-            <Text style={styles.headerTitle}>{categoryInfo.name}</Text>
-          </View>
-          <Text style={styles.headerSubtitle}>Show us what's wrong</Text>
-        </LinearGradient>
 
         {/* Upload Section */}
         <View style={styles.uploadSection}>
@@ -879,29 +977,72 @@ export default function DiagnosisScreen({ navigation, route }: DiagnosisScreenPr
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#E8F4F8',
+    backgroundColor: '#D4E8ED',
   },
   keyboardAvoid: {
     flex: 1,
-    backgroundColor: '#E8F4F8',
+    backgroundColor: '#D4E8ED',
   },
   scrollView: {
     flex: 1,
   },
   inputContent: {
     paddingBottom: 20,
+    paddingTop: 20,
   },
   uploadContent: {
     paddingBottom: 20,
+    paddingTop: 20,
   },
 
-  // Hero Section
-  heroSection: {
+  // Hero Gradient (MainHomeScreen style)
+  heroGradient: {
+    paddingBottom: 20,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  heroWatermark: {
+    position: 'absolute',
+    top: 20,
+    right: -270,
+    bottom: 0,
     alignItems: 'center',
-    paddingVertical: 20,
+    justifyContent: 'center',
+  },
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+  },
+  backButtonText: {
+    color: '#ffffff',
+    fontSize: 17,
+    fontWeight: '500',
+  },
+  heroContent: {
+    alignItems: 'center',
+    paddingVertical: 16,
     paddingHorizontal: 20,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
+  },
+  heroContentCompact: {
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+  },
+  heroTextRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 6,
+  },
+  heroEmoji: {
+    fontSize: 28,
+  },
+  heroTitleSmall: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#ffffff',
   },
   heroTitle: {
     fontSize: 24,
@@ -923,9 +1064,9 @@ const styles = StyleSheet.create({
     marginTop: 24,
   },
   categoriesSectionTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
-    color: '#1e293b',
+    color: '#1E5AA8',
     marginBottom: 16,
   },
   categoriesGrid: {
@@ -935,18 +1076,25 @@ const styles = StyleSheet.create({
   },
   categoryCard: {
     width: (SCREEN_WIDTH - 52) / 2,
-    borderRadius: 16,
+    borderRadius: 20,
     overflow: 'hidden',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 4,
+    shadowRadius: 12,
+    elevation: 6,
   },
   categoryGradient: {
     paddingVertical: 24,
     paddingHorizontal: 16,
     alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  cardCheckmarkWatermark: {
+    position: 'absolute',
+    right: -25,
+    bottom: -45,
   },
   categoryEmoji: {
     fontSize: 40,
@@ -956,6 +1104,9 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#ffffff',
+    textShadowColor: 'rgba(0, 0, 0, 0.2)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
 
   // Tips Section
@@ -990,33 +1141,6 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
 
-  // Upload Header
-  uploadHeader: {
-    alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    borderBottomLeftRadius: 24,
-    borderBottomRightRadius: 24,
-  },
-  headerTextRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    marginTop: 6,
-  },
-  headerEmoji: {
-    fontSize: 28,
-  },
-  headerTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#ffffff',
-  },
-  headerSubtitle: {
-    fontSize: 14,
-    color: 'rgba(255, 255, 255, 0.9)',
-    marginTop: 4,
-  },
 
   // Upload Section
   uploadSection: {
@@ -1024,9 +1148,9 @@ const styles = StyleSheet.create({
     marginTop: 24,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
-    color: '#1e293b',
+    color: '#1E5AA8',
     marginBottom: 16,
   },
   addMediaButton: {

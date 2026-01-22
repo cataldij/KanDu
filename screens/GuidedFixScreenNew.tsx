@@ -1705,7 +1705,7 @@ export default function GuidedFixScreenNew({ navigation, route }: GuidedFixScree
         </Modal>
 
         {/* 4. Session Paused Modal (Complex - 4 pause reasons) */}
-        <Modal visible={state.type === 'PAUSED'} transparent animationType="fade">
+        <Modal visible={state.type === 'PAUSED' && !showPlanModal} transparent animationType="fade">
           <View style={styles.modalOverlay}>
             <View style={styles.pauseModal}>
               <Ionicons
@@ -1811,6 +1811,19 @@ export default function GuidedFixScreenNew({ navigation, route }: GuidedFixScree
                   <Text style={styles.taskInstructionText}>
                     {taskInstruction}
                   </Text>
+                  {/* Small View Plan link */}
+                  <TouchableOpacity
+                    style={styles.viewPlanLink}
+                    onPress={() => {
+                      setShowPlanModal(true);
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    }}
+                  >
+                    <Ionicons name="list-outline" size={14} color="#3b82f6" />
+                    <Text style={styles.viewPlanLinkText}>
+                      View {planRevision > 0 ? 'Updated ' : ''}Plan
+                    </Text>
+                  </TouchableOpacity>
                 </View>
               )}
 
@@ -2001,7 +2014,9 @@ export default function GuidedFixScreenNew({ navigation, route }: GuidedFixScree
               </View>
 
               <ScrollView style={styles.viewPlanStepsList} showsVerticalScrollIndicator={true}>
-                {context.repairSteps.map((step, index) => {
+                {(!context.repairSteps || context.repairSteps.length === 0) ? (
+                  <Text style={{ padding: 20, textAlign: 'center', color: '#64748b' }}>No steps available yet.</Text>
+                ) : context.repairSteps.map((step, index) => {
                   const isCurrentStep = index + 1 === stepNumber;
                   const isCompleted = index + 1 < stepNumber;
                   return (
@@ -3320,6 +3335,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textAlign: 'center',
     lineHeight: 28,
+  },
+  viewPlanLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#f59e0b40',
+    gap: 4,
+  },
+  viewPlanLinkText: {
+    fontSize: 13,
+    color: '#3b82f6',
+    fontWeight: '500',
   },
   pauseModalButtonPrimary: {
     flexDirection: 'row',

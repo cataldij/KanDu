@@ -1,6 +1,7 @@
 /**
- * DoItScreen - AI Home Assistant with Chat Interface
- * Users can ask anything about home improvement and get help
+ * DoItScreen - Decision Helper & Action Companion
+ * Camera-first experience that removes decision fatigue
+ * Includes Spot Check for quick visual/voice checks
  */
 
 import React, { useState, useRef, useLayoutEffect, useEffect } from 'react';
@@ -14,8 +15,10 @@ import {
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
-  Keyboard,
   Dimensions,
+  Modal,
+  Alert,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -25,7 +28,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../App';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import * as ImagePicker from 'expo-image-picker';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as MediaLibrary from 'expo-media-library';
+import { Video as VideoCompressor } from 'react-native-compressor';
+import { CameraView, useCameraPermissions } from 'expo-camera';
 import HouseIcon from '../components/HouseIcon';
+import VideoCompressionModal from '../components/VideoCompressionModal';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -37,35 +46,181 @@ interface Message {
   role: 'user' | 'assistant';
   content: string;
   timestamp: Date;
+  imageUri?: string;
 }
 
-// Quick action buttons
-const QUICK_ACTIONS = [
-  { id: 'fix', icon: 'construct', label: 'Fix Something', color: '#1E90FF' },
-  { id: 'learn', icon: 'bulb', label: 'Learn How', color: '#4A90E2' },
-  { id: 'plan', icon: 'clipboard', label: 'Plan Project', color: '#00CBA9' },
-  { id: 'cost', icon: 'calculator', label: 'Estimate Cost', color: '#7B68EE' },
-  { id: 'safety', icon: 'shield-checkmark', label: 'Safety Check', color: '#10b981' },
-  { id: 'find', icon: 'search', label: 'Find Parts', color: '#f59e0b' },
+// Recipe/Task option from AI
+interface RecipeOption {
+  id: string;
+  name: string;
+  tagline: string;
+  time: string;
+  difficulty: 'Easy' | 'Medium' | 'Moderate';
+  mood?: 'quick' | 'comfort' | 'healthy' | 'creative';
+  ingredients: string[];
+  steps: string[];
+  tips?: string;
+  icon: string;
+}
+
+// Mood filters for cooking
+const MOOD_FILTERS = [
+  { id: 'all', label: 'All', icon: 'apps' },
+  { id: 'quick', label: 'Quick', icon: 'flash' },
+  { id: 'comfort', label: 'Comfort', icon: 'heart' },
+  { id: 'healthy', label: 'Healthy', icon: 'leaf' },
+  { id: 'creative', label: 'Creative', icon: 'sparkles' },
 ];
 
-// Suggested prompts
-const SUGGESTED_PROMPTS = [
-  "What's the easiest home improvement project for a beginner?",
-  "How do I know if I need a professional?",
-  "What tools should every homeowner have?",
-  "How can I make my home more energy efficient?",
-  "What maintenance should I do each season?",
-  "How do I find a good contractor?",
+// "What are you in the mood for?" suggestions
+const MOOD_SUGGESTIONS = [
+  { id: 'something-warm', label: 'Something warm', icon: 'flame', color: '#FF6B35' },
+  { id: 'light-fresh', label: 'Light & fresh', icon: 'leaf', color: '#10B981' },
+  { id: 'kid-friendly', label: 'Kid-friendly', icon: 'happy', color: '#F59E0B' },
+  { id: 'use-it-up', label: 'Use it all up', icon: 'trash-bin', color: '#8B5CF6' },
 ];
+
+// Intent-first tiles - the core verticals
+const INTENT_TILES = [
+  {
+    id: 'cooking',
+    icon: 'restaurant',
+    label: "What's for dinner?",
+    subtext: 'Scan fridge, get ideas',
+    gradient: ['#FF6B35', '#FFA500'] as [string, string],
+    cameraPrompt: 'Show me what you have',
+    cameraSubtext: 'Scan your fridge or pantry',
+  },
+  {
+    id: 'projects',
+    icon: 'hammer',
+    label: 'Tackle a project',
+    subtext: 'What should I work on?',
+    gradient: ['#1E90FF', '#00CBA9'] as [string, string],
+    cameraPrompt: 'Show me the space',
+    cameraSubtext: 'What area needs attention?',
+  },
+  {
+    id: 'organizing',
+    icon: 'grid',
+    label: 'Get organized',
+    subtext: 'Declutter, reorganize',
+    gradient: ['#4A90E2', '#7B68EE'] as [string, string],
+    cameraPrompt: 'Show me the mess',
+    cameraSubtext: 'Drawer, closet, or room',
+  },
+  {
+    id: 'cleaning',
+    icon: 'sparkles',
+    label: 'Quick clean',
+    subtext: 'What to clean now',
+    gradient: ['#00CBA9', '#10B981'] as [string, string],
+    cameraPrompt: 'Show me the area',
+    cameraSubtext: 'What space needs cleaning?',
+  },
+];
+
+// Energy options for contextual recommendations
+const ENERGY_OPTIONS = [
+  { id: 'quick', label: 'Keep it simple', icon: 'flash', subtext: "I'm tired" },
+  { id: 'normal', label: "I've got time", icon: 'time', subtext: 'Normal energy' },
+];
+
+// Serving size options (for cooking)
+const SERVING_OPTIONS = [
+  { id: '1', label: '1', subtext: 'Just me' },
+  { id: '2', label: '2', subtext: 'Couple' },
+  { id: '3-4', label: '3-4', subtext: 'Family' },
+  { id: '5+', label: '5+', subtext: 'Crowd' },
+];
+
+// Meal type options (for cooking)
+const MEAL_TYPE_OPTIONS = [
+  { id: 'breakfast', label: 'Breakfast', icon: 'sunny', color: '#F59E0B' },
+  { id: 'lunch', label: 'Lunch', icon: 'partly-sunny', color: '#10B981' },
+  { id: 'dinner', label: 'Dinner', icon: 'moon', color: '#6366F1' },
+  { id: 'snack', label: 'Snack', icon: 'cafe', color: '#EC4899' },
+  { id: 'on-the-go', label: 'On the Go', icon: 'car', color: '#F97316' },
+];
+
+// Refine options - skill level
+const SKILL_LEVEL_OPTIONS = [
+  { id: 'beginner', label: 'Beginner', icon: 'school', description: 'Simple techniques only' },
+  { id: 'confident', label: 'Confident', icon: 'thumbs-up', description: 'Comfortable in kitchen' },
+  { id: 'chef', label: 'Chef Mode', icon: 'star', description: 'Bring on the challenge' },
+];
+
+// Refine options - cuisine
+const CUISINE_OPTIONS = [
+  { id: 'any', label: 'Any Style', icon: 'globe' },
+  { id: 'italian', label: 'Italian', icon: 'pizza' },
+  { id: 'mexican', label: 'Mexican', icon: 'flame' },
+  { id: 'asian', label: 'Asian', icon: 'restaurant' },
+  { id: 'american', label: 'American', icon: 'fast-food' },
+  { id: 'mediterranean', label: 'Mediterranean', icon: 'leaf' },
+];
+
+// Refine options - dietary restrictions
+const DIETARY_OPTIONS = [
+  { id: 'vegetarian', label: 'Vegetarian', icon: 'leaf' },
+  { id: 'vegan', label: 'Vegan', icon: 'nutrition' },
+  { id: 'gluten-free', label: 'Gluten-Free', icon: 'warning' },
+  { id: 'dairy-free', label: 'Dairy-Free', icon: 'water' },
+  { id: 'low-carb', label: 'Low Carb', icon: 'trending-down' },
+  { id: 'high-protein', label: 'High Protein', icon: 'fitness' },
+];
+
+type FlowState = 'welcome' | 'capture' | 'liveScan' | 'review' | 'analyzing' | 'options' | 'detail';
 
 export default function DoItScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const insets = useSafeAreaInsets();
+  const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+  const cameraRef = useRef<CameraView>(null);
+
+  // Flow state
+  const [flowState, setFlowState] = useState<FlowState>('welcome');
+  const [activeIntent, setActiveIntent] = useState<typeof INTENT_TILES[0] | null>(null);
+  const [selectedEnergy, setSelectedEnergy] = useState<string | null>(null);
+  const [selectedServings, setSelectedServings] = useState<string | null>(null);
+  const [selectedMealType, setSelectedMealType] = useState<string | null>(null);
+  const [showContextPicker, setShowContextPicker] = useState(false);
+  const [pendingIntent, setPendingIntent] = useState<typeof INTENT_TILES[0] | null>(null);
+
+  // Media state
+  const [capturedImage, setCapturedImage] = useState<string | null>(null);
+  const [capturedVideo, setCapturedVideo] = useState<string | null>(null);
+  const [_showMediaOptions, setShowMediaOptions] = useState(false);
+  const [isCompressing, setIsCompressing] = useState(false);
+  const [compressionProgress, setCompressionProgress] = useState(0);
+  const [compressionStatus, setCompressionStatus] = useState<'compressing' | 'complete' | 'error'>('compressing');
+
+  // Multi-shot scan state
+  const [isScanning, setIsScanning] = useState(false);
+  const [scannedFrames, setScannedFrames] = useState<string[]>([]);
+  const [isCameraReady, setIsCameraReady] = useState(false);
+  const scanIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pressStartTimeRef = useRef<number>(0);
+  const isLongPressRef = useRef<boolean>(false);
+
+  // Options state (replaces chat)
+  const [recipeOptions, setRecipeOptions] = useState<RecipeOption[]>([]);
+  const [selectedRecipe, setSelectedRecipe] = useState<RecipeOption | null>(null);
+  const [activeMoodFilter, setActiveMoodFilter] = useState('all');
+  const [loading, setLoading] = useState(false);
+
+  // Refine options state
+  const [showRefineModal, setShowRefineModal] = useState(false);
+  const [selectedSkillLevel, setSelectedSkillLevel] = useState<string | null>(null);
+  const [selectedCuisine, setSelectedCuisine] = useState<string | null>(null);
+  const [selectedDietary, setSelectedDietary] = useState<string[]>([]);
+  const [feedbackText, setFeedbackText] = useState('');
+  const [isRegenerating, setIsRegenerating] = useState(false);
+
+  // Legacy state (keeping for compatibility during transition)
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [recommendation, setRecommendation] = useState<string | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
 
   useLayoutEffect(() => {
@@ -74,29 +229,931 @@ export default function DoItScreen() {
     });
   }, [navigation]);
 
-  useEffect(() => {
-    const keyboardDidShow = Keyboard.addListener('keyboardDidShow', () => {
-      setKeyboardVisible(true);
-    });
-    const keyboardDidHide = Keyboard.addListener('keyboardDidHide', () => {
-      setKeyboardVisible(false);
-    });
+  // Get the AI prompt based on intent and energy
+  const getAnalysisPrompt = (intent: string, energy: string, servings?: string | null, mealType?: string | null) => {
+    const energyContext = energy === 'quick'
+      ? 'The user is TIRED and wants the EASIEST option. Minimize effort, time, and cleanup.'
+      : 'The user has normal energy and can handle moderate effort.';
 
-    return () => {
-      keyboardDidShow.remove();
-      keyboardDidHide.remove();
-    };
-  }, []);
+    const servingsContext = servings
+      ? `SERVING SIZE: Make enough for ${servings === '5+' ? '5 or more people' : servings === '3-4' ? '3-4 people' : servings === '2' ? '2 people' : '1 person (single serving)'}. Adjust portions accordingly.`
+      : '';
 
-  useEffect(() => {
-    // Scroll to bottom when new messages arrive
-    if (messages.length > 0) {
-      setTimeout(() => {
-        scrollViewRef.current?.scrollToEnd({ animated: true });
-      }, 100);
+    const mealTypeContext = mealType
+      ? `MEAL TYPE: This is for ${mealType === 'on-the-go' ? 'an ON-THE-GO meal (portable, easy to eat, no utensils needed ideally)' : mealType === 'breakfast' ? 'BREAKFAST (morning-appropriate, energizing)' : mealType === 'lunch' ? 'LUNCH (midday meal, satisfying but not too heavy)' : mealType === 'dinner' ? 'DINNER (evening meal, can be more elaborate)' : 'a SNACK (light, quick to prepare, smaller portion)'}. Suggest appropriate dishes for this meal type.`
+      : '';
+
+    const prompts: Record<string, string> = {
+      cooking: `You are KanDu, a friendly cooking assistant. Analyze this image of ingredients/fridge/pantry.
+
+${energyContext}
+${servingsContext}
+${mealTypeContext}
+
+Give exactly 3 meal options based on the visible ingredients. Return ONLY valid JSON, no markdown.
+
+JSON FORMAT (return exactly this structure):
+{
+  "options": [
+    {
+      "id": "1",
+      "name": "Dish Name",
+      "tagline": "Short catchy description (5-8 words)",
+      "time": "20 min",
+      "difficulty": "Easy",
+      "mood": "comfort",
+      "ingredients": ["ingredient 1", "ingredient 2", "ingredient 3"],
+      "steps": ["Step 1 instruction", "Step 2 instruction", "Step 3 instruction"],
+      "tips": "Optional pro tip"
     }
-  }, [messages]);
+  ]
+}
 
+RULES:
+1. Return EXACTLY 3 options - varied styles (quick, comfort, healthy/creative)
+2. difficulty must be "Easy", "Medium", or "Moderate"
+3. mood must be one of: "quick", "comfort", "healthy", "creative"
+4. Use ONLY ingredients visible in the image (be creative!)
+5. Keep steps simple and actionable (3-6 steps each)
+6. ${servings ? `All recipes should serve ${servings === '5+' ? '5+' : servings}` : 'Assume cooking for 2 people'}
+7. If ingredients are limited, suggest simpler dishes`,
+
+      projects: `You are KanDu, a helpful home project assistant. Analyze this image of the space/area.
+
+${energyContext}
+
+RULES:
+1. Pick exactly ONE project or task to focus on
+2. Be specific about what you see that needs attention
+3. Keep it SHORT (3-4 sentences max)
+4. Start with what to tackle
+5. Include the first step
+6. End with approximate time needed
+
+Format:
+**[Project/Task]**
+[Why this is the right thing to tackle]
+**First step:** [What to do right now]
+**Time:** [X minutes]`,
+
+      organizing: `You are KanDu, an organizing assistant. Analyze this image of the messy space.
+
+${energyContext}
+
+RULES:
+1. Pick exactly ONE organizing approach - don't overwhelm with options
+2. Focus on quick visual improvement
+3. Keep it SHORT (3-4 sentences max)
+4. "Good enough" beats "perfect"
+5. Include the first step
+6. End with approximate time needed
+
+Format:
+**[Organizing Task]**
+[Simple system to follow]
+**First step:** [What to do right now]
+**Time:** [X minutes]`,
+
+      cleaning: `You are KanDu, a cleaning assistant. Analyze this image of the space.
+
+${energyContext}
+
+RULES:
+1. Pick exactly ONE area/task - highest visual impact
+2. ${energy === 'quick' ? 'Focus on "guest ready" visible areas only' : 'Can suggest more thorough cleaning'}
+3. Keep it SHORT (3-4 sentences max)
+4. Be specific about what you see
+5. Include the first step
+6. End with approximate time needed
+
+Format:
+**[Cleaning Task]**
+[Why this is the priority]
+**First step:** [What to do right now]
+**Time:** [X minutes]`,
+    };
+
+    return prompts[intent] || prompts.cooking;
+  };
+
+  // Analyze the captured image
+  const analyzeImage = async (imageUri: string) => {
+    if (!activeIntent || !selectedEnergy) return;
+
+    setFlowState('analyzing');
+    setLoading(true);
+
+    try {
+      // Read image as base64
+      const base64 = await FileSystem.readAsStringAsync(imageUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+
+      const prompt = getAnalysisPrompt(activeIntent.id, selectedEnergy, selectedServings, selectedMealType);
+
+      const result = await model.generateContent([
+        { text: prompt },
+        {
+          inlineData: {
+            mimeType: 'image/jpeg',
+            data: base64,
+          },
+        },
+      ]);
+
+      const responseText = result.response.text();
+      console.log('[DoIt] AI Response:', responseText);
+
+      // For cooking, parse JSON response
+      if (activeIntent.id === 'cooking') {
+        try {
+          // Clean up response - remove markdown code blocks if present
+          let jsonStr = responseText;
+          if (jsonStr.includes('```json')) {
+            jsonStr = jsonStr.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+          } else if (jsonStr.includes('```')) {
+            jsonStr = jsonStr.replace(/```\n?/g, '');
+          }
+          jsonStr = jsonStr.trim();
+
+          const parsed = JSON.parse(jsonStr);
+          if (parsed.options && Array.isArray(parsed.options)) {
+            // Add icon based on mood
+            const optionsWithIcons = parsed.options.map((opt: RecipeOption, idx: number) => ({
+              ...opt,
+              id: String(idx + 1),
+              icon: opt.mood === 'quick' ? 'flash' : opt.mood === 'comfort' ? 'heart' : opt.mood === 'healthy' ? 'leaf' : 'sparkles',
+            }));
+            setRecipeOptions(optionsWithIcons);
+            setSelectedRecipe(null);
+            setActiveMoodFilter('all');
+          }
+        } catch (parseError) {
+          console.error('JSON parse error:', parseError);
+          console.log('Raw response that failed to parse:', responseText.substring(0, 200));
+          // Fallback: try to extract something useful from the text
+          // Split by common delimiters to create steps
+          const lines = responseText
+            .replace(/```[\s\S]*?```/g, '') // Remove code blocks
+            .replace(/\*\*/g, '') // Remove bold markers
+            .split(/\n+/)
+            .filter(line => line.trim().length > 10 && !line.includes('{') && !line.includes('}'))
+            .slice(0, 6);
+
+          setRecipeOptions([{
+            id: '1',
+            name: 'Recipe Suggestion',
+            tagline: 'Based on your ingredients',
+            time: '30 min',
+            difficulty: 'Easy',
+            ingredients: ['Check your fridge for ingredients'],
+            steps: lines.length > 0 ? lines : ['Follow the AI suggestions to prepare your meal'],
+            icon: 'restaurant',
+          }]);
+        }
+      }
+
+      setRecommendation(responseText);
+      setFlowState('options');
+
+    } catch (error) {
+      console.error('Analysis error:', error);
+      Alert.alert('Analysis Failed', 'Could not analyze the image. Please try again.');
+      setFlowState('capture');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Camera/media functions
+  const takePhoto = async () => {
+    try {
+      const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permissionResult.granted) {
+        Alert.alert('Permission Required', 'Please allow camera access');
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets?.[0]) {
+        setCapturedImage(result.assets[0].uri);
+        setShowMediaOptions(false);
+        // Auto-analyze after capture
+        await analyzeImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Camera error:', error);
+      Alert.alert('Error', 'Failed to open camera');
+    }
+  };
+
+  const pickImage = async () => {
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permissionResult.granted) {
+        Alert.alert('Permission Required', 'Please allow photo access');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets?.[0]) {
+        setCapturedImage(result.assets[0].uri);
+        setCapturedVideo(null);
+        setShowMediaOptions(false);
+        // Auto-analyze after selection
+        await analyzeImage(result.assets[0].uri);
+      }
+    } catch (error) {
+      console.error('Gallery error:', error);
+      Alert.alert('Error', 'Failed to open gallery');
+    }
+  };
+
+  // Video constants
+  const TARGET_VIDEO_SIZE_MB = 6;
+  const MAX_FILE_SIZE_BYTES = 7 * 1024 * 1024;
+
+  // Get local file URI for iOS videos from Photos library
+  const getLocalVideoUri = async (uri: string): Promise<string> => {
+    if (Platform.OS !== 'ios') {
+      return uri;
+    }
+
+    if (uri.startsWith('file://')) {
+      return uri;
+    }
+
+    console.log('Converting iOS video URI to local file...', uri.substring(0, 50));
+
+    try {
+      if (uri.startsWith('ph://')) {
+        const { status } = await MediaLibrary.requestPermissionsAsync();
+        if (status === 'granted') {
+          const assetId = uri.replace('ph://', '').split('/')[0];
+          try {
+            const asset = await MediaLibrary.getAssetInfoAsync(assetId);
+            if (asset && asset.localUri) {
+              return asset.localUri;
+            }
+          } catch (assetError) {
+            console.log('MediaLibrary.getAssetInfoAsync failed, trying copy fallback...');
+          }
+        }
+      }
+
+      const filename = `video_${Date.now()}.mp4`;
+      const destUri = `${FileSystem.cacheDirectory}${filename}`;
+      await FileSystem.copyAsync({ from: uri, to: destUri });
+
+      const info = await FileSystem.getInfoAsync(destUri);
+      if (info.exists && 'size' in info && info.size && info.size > 1000) {
+        return destUri;
+      }
+      throw new Error('Video copy produced invalid file');
+    } catch (error) {
+      console.error('Error getting local video URI:', error);
+      throw new Error('Could not access video from Photos library');
+    }
+  };
+
+  // Compress video to target size
+  const compressVideo = async (uri: string): Promise<string> => {
+    try {
+      let workingUri = await getLocalVideoUri(uri);
+
+      const fileInfo = await FileSystem.getInfoAsync(workingUri);
+      if (!fileInfo.exists || !('size' in fileInfo) || !fileInfo.size) {
+        return workingUri;
+      }
+
+      const fileSizeMB = fileInfo.size / (1024 * 1024);
+      console.log(`Original video size: ${fileSizeMB.toFixed(2)} MB`);
+
+      if (fileInfo.size <= MAX_FILE_SIZE_BYTES) {
+        return workingUri;
+      }
+
+      setIsCompressing(true);
+      setCompressionProgress(0);
+      setCompressionStatus('compressing');
+
+      const compressionRatio = TARGET_VIDEO_SIZE_MB / fileSizeMB;
+      let quality: 'low' | 'medium' | 'high' = 'medium';
+      if (compressionRatio < 0.3) {
+        quality = 'low';
+      } else if (compressionRatio < 0.6) {
+        quality = 'medium';
+      } else {
+        quality = 'high';
+      }
+
+      const compressedUri = await VideoCompressor.compress(
+        workingUri,
+        {
+          compressionMethod: 'auto',
+          maxSize: 720,
+          bitrate: quality === 'low' ? 1000000 : quality === 'medium' ? 2000000 : 3000000,
+        },
+        (progress) => {
+          setCompressionProgress(progress);
+        }
+      );
+
+      const compressedInfo = await FileSystem.getInfoAsync(compressedUri);
+      if (compressedInfo.exists && 'size' in compressedInfo && compressedInfo.size) {
+        if (compressedInfo.size > MAX_FILE_SIZE_BYTES && quality !== 'low') {
+          const recompressedUri = await VideoCompressor.compress(
+            compressedUri,
+            {
+              compressionMethod: 'auto',
+              maxSize: 480,
+              bitrate: 800000,
+            },
+            (progress) => {
+              setCompressionProgress(0.5 + progress * 0.5);
+            }
+          );
+          setCompressionStatus('complete');
+          setTimeout(() => setIsCompressing(false), 800);
+          return recompressedUri;
+        }
+      }
+
+      setCompressionStatus('complete');
+      setTimeout(() => setIsCompressing(false), 800);
+      return compressedUri;
+    } catch (error) {
+      console.error('Video compression error:', error);
+      setCompressionStatus('error');
+      setTimeout(() => setIsCompressing(false), 1500);
+      throw error;
+    }
+  };
+
+  // Analyze video with Gemini
+  const analyzeVideo = async (videoUri: string) => {
+    if (!activeIntent || !selectedEnergy) return;
+
+    setFlowState('analyzing');
+    setLoading(true);
+
+    try {
+      const base64 = await FileSystem.readAsStringAsync(videoUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+      const prompt = getAnalysisPrompt(activeIntent.id, selectedEnergy, selectedServings, selectedMealType);
+
+      const result = await model.generateContent([
+        { text: prompt },
+        {
+          inlineData: {
+            mimeType: 'video/mp4',
+            data: base64,
+          },
+        },
+      ]);
+
+      const responseText = result.response.text();
+      setRecommendation(responseText);
+
+      const userMessage: Message = {
+        id: Date.now().toString(),
+        role: 'user',
+        content: `[Scanned video of ${activeIntent.id === 'cooking' ? 'fridge/pantry' : 'area'}]`,
+        timestamp: new Date(),
+      };
+
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        content: responseText,
+        timestamp: new Date(),
+      };
+
+      setMessages([userMessage, assistantMessage]);
+      setFlowState('options');
+    } catch (error) {
+      console.error('Video analysis error:', error);
+      Alert.alert('Analysis Failed', 'Could not analyze the video. Please try again.');
+      setFlowState('capture');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Record video with camera
+  const recordVideo = async () => {
+    try {
+      const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permissionResult.granted) {
+        Alert.alert('Permission Required', 'Please allow camera access');
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['videos'],
+        allowsEditing: false,
+        quality: 1,
+        videoMaxDuration: 60,
+      });
+
+      if (!result.canceled && result.assets?.[0]) {
+        try {
+          const compressedUri = await compressVideo(result.assets[0].uri);
+          setCapturedVideo(compressedUri);
+          setCapturedImage(null);
+          setShowMediaOptions(false);
+          await analyzeVideo(compressedUri);
+        } catch (error) {
+          Alert.alert('Video Processing Failed', 'Could not process the video. Please try again.');
+        }
+      }
+    } catch (error) {
+      console.error('Record video error:', error);
+      Alert.alert('Error', 'Failed to open camera');
+    }
+  };
+
+  // Pick video from gallery
+  const pickVideo = async () => {
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permissionResult.granted) {
+        Alert.alert('Permission Required', 'Please allow photo access');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['videos'],
+        allowsEditing: false,
+        quality: 0.8,
+        legacy: true,
+        presentationStyle: ImagePicker.UIImagePickerPresentationStyle.FULL_SCREEN,
+      });
+
+      if (!result.canceled && result.assets?.[0]) {
+        try {
+          const compressedUri = await compressVideo(result.assets[0].uri);
+          setCapturedVideo(compressedUri);
+          setCapturedImage(null);
+          setShowMediaOptions(false);
+          await analyzeVideo(compressedUri);
+        } catch (error) {
+          Alert.alert('Video Processing Failed', 'Could not process the video. Please try again.');
+        }
+      }
+    } catch (error: any) {
+      console.error('Pick video error:', error);
+      if (error?.message?.includes('3164')) {
+        Alert.alert(
+          'Video Access Issue',
+          'iOS is having trouble accessing your videos. Try recording a new video instead.',
+          [{ text: 'OK' }]
+        );
+      } else {
+        Alert.alert('Error', 'Failed to open gallery');
+      }
+    }
+  };
+
+  // Live Scan - opens real-time camera view
+  const startLiveScan = async () => {
+    if (!cameraPermission?.granted) {
+      const permission = await requestCameraPermission();
+      if (!permission.granted) {
+        Alert.alert('Permission Required', 'Please allow camera access to use Live Scan');
+        return;
+      }
+    }
+    setScannedFrames([]); // Reset frames when entering live scan
+    setIsCameraReady(false); // Reset camera ready state
+    setFlowState('liveScan');
+  };
+
+  // Analyze multiple images with Gemini
+  const analyzeMultipleImages = async (imageUris: string[]) => {
+    if (!activeIntent || !selectedEnergy || imageUris.length === 0) return;
+
+    setFlowState('analyzing');
+    setLoading(true);
+
+    try {
+      // Read all images as base64
+      const imagePromises = imageUris.map(async (uri) => {
+        const base64 = await FileSystem.readAsStringAsync(uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        return {
+          inlineData: {
+            mimeType: 'image/jpeg',
+            data: base64,
+          },
+        };
+      });
+
+      const imageData = await Promise.all(imagePromises);
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+
+      // Modified prompt for multi-image analysis
+      const energyContext = selectedEnergy === 'quick'
+        ? 'The user is TIRED and wants the EASIEST option. Minimize effort, time, and cleanup.'
+        : 'The user has normal energy and can handle moderate effort.';
+
+      const servingsContext = selectedServings
+        ? `SERVING SIZE: Make enough for ${selectedServings === '5+' ? '5 or more people' : selectedServings === '3-4' ? '3-4 people' : selectedServings === '2' ? '2 people' : '1 person (single serving)'}.`
+        : '';
+
+      const mealTypeContext = selectedMealType
+        ? `MEAL TYPE: This is for ${selectedMealType === 'on-the-go' ? 'an ON-THE-GO meal (portable, easy to eat, no utensils needed ideally)' : selectedMealType === 'breakfast' ? 'BREAKFAST (morning-appropriate, energizing)' : selectedMealType === 'lunch' ? 'LUNCH (midday meal, satisfying but not too heavy)' : selectedMealType === 'dinner' ? 'DINNER (evening meal, can be more elaborate)' : 'a SNACK (light, quick to prepare, smaller portion)'}. Suggest appropriate dishes for this meal type.`
+        : '';
+
+      const multiImagePrompt = activeIntent.id === 'cooking'
+        ? `You are KanDu, a friendly cooking assistant. I'm showing you ${imageUris.length} images of my kitchen - this might include my fridge, pantry, cabinets, or counters.
+
+${energyContext}
+${servingsContext}
+${mealTypeContext}
+
+Look at ALL the images together to see everything available. Give exactly 3 meal options based on visible ingredients. Return ONLY valid JSON, no markdown.
+
+JSON FORMAT (return exactly this structure):
+{
+  "options": [
+    {
+      "id": "1",
+      "name": "Dish Name",
+      "tagline": "Short catchy description (5-8 words)",
+      "time": "20 min",
+      "difficulty": "Easy",
+      "mood": "comfort",
+      "ingredients": ["ingredient 1", "ingredient 2", "ingredient 3"],
+      "steps": ["Step 1 instruction", "Step 2 instruction", "Step 3 instruction"],
+      "tips": "Optional pro tip"
+    }
+  ]
+}
+
+RULES:
+1. Return EXACTLY 3 options - varied styles (quick, comfort, healthy/creative)
+2. difficulty must be "Easy", "Medium", or "Moderate"
+3. mood must be one of: "quick", "comfort", "healthy", "creative"
+4. Use ONLY ingredients visible across ALL images (be creative!)
+5. Keep steps simple and actionable (3-6 steps each)
+6. ${selectedServings ? `All recipes should serve ${selectedServings === '5+' ? '5+' : selectedServings}` : 'Assume cooking for 2 people'}
+7. If ingredients are limited, suggest simpler dishes
+8. ${selectedMealType ? `All suggestions must be appropriate for ${selectedMealType}` : 'Suggest dinner options by default'}`
+        : `You are KanDu, helping with ${activeIntent.id}. I'm showing you ${imageUris.length} images of different areas/angles.
+
+${energyContext}
+
+RULES:
+1. Look at ALL the images together to understand the full scope
+2. Pick exactly ONE task/project that addresses what you see
+3. Be specific about what needs attention
+4. Keep it SHORT (3-4 sentences max)
+5. Include the first step
+6. End with approximate time needed
+
+Format:
+**[Task/Project]**
+[Why this is the right thing to tackle based on all images]
+**First step:** [What to do right now]
+**Time:** [X minutes]`;
+
+      const result = await model.generateContent([
+        { text: multiImagePrompt },
+        ...imageData,
+      ]);
+
+      const responseText = result.response.text();
+      console.log('[DoIt] Multi-image AI Response:', responseText);
+
+      // For cooking, parse JSON response
+      if (activeIntent.id === 'cooking') {
+        try {
+          // Clean up response - remove markdown code blocks if present
+          let jsonStr = responseText;
+          if (jsonStr.includes('```json')) {
+            jsonStr = jsonStr.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+          } else if (jsonStr.includes('```')) {
+            jsonStr = jsonStr.replace(/```\n?/g, '');
+          }
+          jsonStr = jsonStr.trim();
+
+          const parsed = JSON.parse(jsonStr);
+          if (parsed.options && Array.isArray(parsed.options)) {
+            // Add icon based on mood
+            const optionsWithIcons = parsed.options.map((opt: RecipeOption, idx: number) => ({
+              ...opt,
+              id: String(idx + 1),
+              icon: opt.mood === 'quick' ? 'flash' : opt.mood === 'comfort' ? 'heart' : opt.mood === 'healthy' ? 'leaf' : 'sparkles',
+            }));
+            setRecipeOptions(optionsWithIcons);
+            setSelectedRecipe(null);
+            setActiveMoodFilter('all');
+          }
+        } catch (parseError) {
+          console.error('JSON parse error:', parseError);
+          console.log('Raw response that failed to parse:', responseText.substring(0, 200));
+          // Fallback: try to extract something useful from the text
+          const lines = responseText
+            .replace(/```[\s\S]*?```/g, '') // Remove code blocks
+            .replace(/\*\*/g, '') // Remove bold markers
+            .split(/\n+/)
+            .filter(line => line.trim().length > 10 && !line.includes('{') && !line.includes('}'))
+            .slice(0, 6);
+
+          setRecipeOptions([{
+            id: '1',
+            name: 'Recipe Suggestion',
+            tagline: 'Based on your ingredients',
+            time: '30 min',
+            difficulty: 'Easy',
+            ingredients: ['Check your fridge for ingredients'],
+            steps: lines.length > 0 ? lines : ['Follow the AI suggestions to prepare your meal'],
+            icon: 'restaurant',
+          }]);
+        }
+      }
+
+      setRecommendation(responseText);
+      setFlowState('options');
+    } catch (error) {
+      console.error('Multi-image analysis error:', error);
+      Alert.alert('Analysis Failed', 'Could not analyze the images. Please try again.');
+      setFlowState('liveScan');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Regenerate recipes with refinements or feedback
+  const regenerateWithRefinements = async (feedback?: string) => {
+    if (!activeIntent || scannedFrames.length === 0) return;
+
+    setIsRegenerating(true);
+    setShowRefineModal(false);
+
+    try {
+      // Build refinement context
+      const skillContext = selectedSkillLevel
+        ? `SKILL LEVEL: User is a ${selectedSkillLevel === 'beginner' ? 'BEGINNER - use only simple techniques, no fancy equipment, explain everything clearly' : selectedSkillLevel === 'confident' ? 'CONFIDENT cook - can handle moderate complexity' : 'SKILLED CHEF - bring on complex techniques and creative challenges'}.`
+        : '';
+
+      const cuisineContext = selectedCuisine && selectedCuisine !== 'any'
+        ? `CUISINE PREFERENCE: Focus on ${selectedCuisine.toUpperCase()} style dishes.`
+        : '';
+
+      const dietaryContext = selectedDietary.length > 0
+        ? `DIETARY RESTRICTIONS: Must be ${selectedDietary.join(', ')}. Do NOT include any ingredients that violate these restrictions.`
+        : '';
+
+      const feedbackContext = feedback
+        ? `USER FEEDBACK: "${feedback}" - Please take this into account and suggest different options.`
+        : '';
+
+      const energyContext = selectedEnergy === 'quick'
+        ? 'The user is TIRED and wants the EASIEST option. Minimize effort, time, and cleanup.'
+        : 'The user has normal energy and can handle moderate effort.';
+
+      const servingsContext = selectedServings
+        ? `SERVING SIZE: Make enough for ${selectedServings === '5+' ? '5 or more people' : selectedServings === '3-4' ? '3-4 people' : selectedServings === '2' ? '2 people' : '1 person'}.`
+        : '';
+
+      const mealTypeContext = selectedMealType
+        ? `MEAL TYPE: This is for ${selectedMealType.toUpperCase()}.`
+        : '';
+
+      // Read images
+      const imagePromises = scannedFrames.map(async (uri) => {
+        const base64 = await FileSystem.readAsStringAsync(uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        return { inlineData: { mimeType: 'image/jpeg', data: base64 } };
+      });
+
+      const imageData = await Promise.all(imagePromises);
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+
+      const refinedPrompt = `You are KanDu, a friendly cooking assistant. I'm showing you ${scannedFrames.length} images of my kitchen.
+
+${energyContext}
+${servingsContext}
+${mealTypeContext}
+${skillContext}
+${cuisineContext}
+${dietaryContext}
+${feedbackContext}
+
+The user wants DIFFERENT options than before. Give exactly 3 NEW meal options. Return ONLY valid JSON, no markdown.
+
+JSON FORMAT:
+{
+  "options": [
+    {
+      "id": "1",
+      "name": "Dish Name",
+      "tagline": "Short catchy description (5-8 words)",
+      "time": "20 min",
+      "difficulty": "Easy",
+      "mood": "comfort",
+      "ingredients": ["ingredient 1", "ingredient 2"],
+      "steps": ["Step 1", "Step 2", "Step 3"],
+      "tips": "Optional pro tip"
+    }
+  ]
+}
+
+RULES:
+1. Return EXACTLY 3 NEW options different from typical suggestions
+2. difficulty must be "Easy", "Medium", or "Moderate"
+3. mood must be one of: "quick", "comfort", "healthy", "creative"
+4. Use ONLY ingredients visible in the images
+5. ${selectedSkillLevel === 'beginner' ? 'Keep ALL steps very simple - no complex techniques' : 'Match complexity to skill level'}
+6. ${selectedDietary.length > 0 ? 'STRICTLY follow dietary restrictions' : 'No dietary restrictions'}`;
+
+      const result = await model.generateContent([
+        { text: refinedPrompt },
+        ...imageData,
+      ]);
+
+      const responseText = result.response.text();
+      console.log('[DoIt] Refined AI Response:', responseText);
+
+      // Parse JSON response
+      let jsonStr = responseText;
+      if (jsonStr.includes('```json')) {
+        jsonStr = jsonStr.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+      } else if (jsonStr.includes('```')) {
+        jsonStr = jsonStr.replace(/```\n?/g, '');
+      }
+      jsonStr = jsonStr.trim();
+
+      const parsed = JSON.parse(jsonStr);
+      if (parsed.options && Array.isArray(parsed.options)) {
+        const optionsWithIcons = parsed.options.map((opt: RecipeOption, idx: number) => ({
+          ...opt,
+          id: String(idx + 1),
+          icon: opt.mood === 'quick' ? 'flash' : opt.mood === 'comfort' ? 'heart' : opt.mood === 'healthy' ? 'leaf' : 'sparkles',
+        }));
+        setRecipeOptions(optionsWithIcons);
+        setSelectedRecipe(null);
+        setActiveMoodFilter('all');
+        setFeedbackText(''); // Clear feedback
+      }
+    } catch (error) {
+      console.error('[DoIt] Regeneration error:', error);
+      Alert.alert('Error', 'Failed to regenerate options. Please try again.');
+    } finally {
+      setIsRegenerating(false);
+    }
+  };
+
+  // Handle press start - track time and prepare for potential hold
+  const handlePressIn = () => {
+    console.log('[LiveScan] Press started');
+    pressStartTimeRef.current = Date.now();
+    isLongPressRef.current = false;
+  };
+
+  // Capture a single photo from the camera
+  const capturePhoto = async (quality: number = 0.8): Promise<string | null> => {
+    if (!cameraRef.current) {
+      console.log('[LiveScan] No camera ref available');
+      return null;
+    }
+
+    if (!isCameraReady) {
+      console.log('[LiveScan] Camera not ready yet');
+      return null;
+    }
+
+    try {
+      console.log('[LiveScan] Taking picture...');
+      // CameraView's takePictureAsync accepts options or no args
+      const photo = await cameraRef.current.takePictureAsync({
+        quality,
+      });
+      console.log('[LiveScan] Photo taken:', photo?.uri ? 'success' : 'no uri');
+      return photo?.uri || null;
+    } catch (error) {
+      console.error('[LiveScan] Capture error:', error);
+      return null;
+    }
+  };
+
+  // Handle camera ready
+  const handleCameraReady = () => {
+    console.log('[LiveScan] Camera is ready');
+    setIsCameraReady(true);
+  };
+
+  // Handle press end - determine if it was a tap or hold
+  const handlePressOut = async () => {
+    const pressDuration = Date.now() - pressStartTimeRef.current;
+    console.log('[LiveScan] Press ended, duration:', pressDuration, 'isLongPress:', isLongPressRef.current);
+
+    // If it was a long press (hold), stop scanning - stay in liveScan to allow more captures
+    if (isLongPressRef.current) {
+      if (scanIntervalRef.current) {
+        clearInterval(scanIntervalRef.current);
+        scanIntervalRef.current = null;
+      }
+      setIsScanning(false);
+      // Just log - stay in liveScan, user can tap Done when ready
+      console.log('[LiveScan] Stopped scanning, have', scannedFrames.length, 'frames. Staying in camera.');
+    }
+    // If it was a quick tap (< 300ms), take single photo and stay in liveScan
+    else if (pressDuration < 300) {
+      console.log('[LiveScan] Quick tap detected, capturing single photo');
+      const photoUri = await capturePhoto(0.8);
+
+      if (photoUri) {
+        console.log('[LiveScan] Single photo captured:', photoUri);
+        setCapturedImage(photoUri);
+        // Add to scannedFrames - stay in liveScan so user can take more
+        setScannedFrames(prev => {
+          const newFrames = [...prev, photoUri];
+          console.log('[LiveScan] Now have', newFrames.length, 'frames. Staying in camera.');
+          return newFrames;
+        });
+        // Stay in liveScan - user taps Done when ready
+      } else {
+        console.log('[LiveScan] Failed to capture single photo');
+        Alert.alert('Capture Failed', 'Could not capture image. Please try again.');
+      }
+    }
+  };
+
+  // Handle long press - start continuous scanning (adds to existing frames)
+  const handleLongPress = async () => {
+    console.log('[LiveScan] Long press triggered, isScanning:', isScanning, 'existing frames:', scannedFrames.length);
+    if (!cameraRef.current || isScanning) {
+      console.log('[LiveScan] Aborting long press - no camera or already scanning');
+      return;
+    }
+
+    isLongPressRef.current = true;
+    setIsScanning(true);
+    // DON'T reset frames - we want to ADD to existing captures
+
+    // Capture first frame immediately and add to existing
+    const firstPhoto = await capturePhoto(0.6);
+    if (firstPhoto) {
+      console.log('[LiveScan] Adding new frame to existing', scannedFrames.length, 'frames');
+      setScannedFrames(prev => [...prev, firstPhoto]);
+    }
+
+    // Continue capturing every 1.5 seconds while held
+    scanIntervalRef.current = setInterval(async () => {
+      const photo = await capturePhoto(0.6);
+      if (photo) {
+        setScannedFrames(prev => {
+          if (prev.length >= 12) { // Increased max to 12 for multi-location scanning
+            console.log('[LiveScan] Max frames reached (12)');
+            return prev;
+          }
+          console.log('[LiveScan] Frame', prev.length + 1, 'captured');
+          return [...prev, photo];
+        });
+      }
+    }, 1500);
+  };
+
+  // Handle intent selection
+  const handleIntentSelect = (intent: typeof INTENT_TILES[0]) => {
+    setPendingIntent(intent);
+    setShowContextPicker(true);
+  };
+
+  // Handle energy selection - go straight to camera
+  const handleEnergySelect = (energy: string) => {
+    setSelectedEnergy(energy);
+    setShowContextPicker(false);
+
+    if (pendingIntent) {
+      setActiveIntent(pendingIntent);
+      setFlowState('capture');
+      // Show media options immediately
+      setTimeout(() => setShowMediaOptions(true), 300);
+    }
+  };
+
+  // Send follow-up message
   const sendMessage = async (text?: string) => {
     const messageText = text || inputText.trim();
     if (!messageText || loading) return;
@@ -111,41 +1168,25 @@ export default function DoItScreen() {
     setMessages(prev => [...prev, userMessage]);
     setInputText('');
     setLoading(true);
+    setFlowState('options');
 
     try {
       const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
 
-      // Build conversation history for context
       const conversationHistory = messages.map(msg => ({
-        role: msg.role,
+        role: msg.role === 'user' ? 'user' : 'model',
         parts: [{ text: msg.content }],
       }));
 
-      const systemPrompt = `You are KanDu, a friendly and knowledgeable AI home assistant. You help homeowners with:
-- DIY repairs and maintenance
-- Home improvement projects
-- Understanding how things work
-- Finding the right tools and materials
-- Safety advice
-- Cost estimates
-- When to call a professional
-
-Be conversational, helpful, and encouraging. Use simple language that anyone can understand.
-Keep responses concise but thorough - aim for 2-4 paragraphs maximum unless the user asks for detailed instructions.
-If someone needs step-by-step help or a diagnosis, encourage them to use the Fix It or Plan It features in the app.
-
-Important: You're chatting with a homeowner who may be stressed about a home issue. Be reassuring and practical.`;
+      const systemContext = `You are KanDu, continuing to help with ${activeIntent?.id || 'a task'}.
+Keep responses SHORT (2-3 sentences). Be helpful and direct.
+The user's energy level is: ${selectedEnergy === 'quick' ? 'tired, keep it simple' : 'normal'}.
+Previous recommendation was about: ${recommendation?.substring(0, 100) || 'a task'}`;
 
       const chat = model.startChat({
         history: [
-          {
-            role: 'user',
-            parts: [{ text: systemPrompt }],
-          },
-          {
-            role: 'model',
-            parts: [{ text: "I understand! I'm KanDu, your friendly home assistant. I'm here to help with any home-related questions - from simple fixes to major projects. What can I help you with today?" }],
-          },
+          { role: 'user', parts: [{ text: systemContext }] },
+          { role: 'model', parts: [{ text: "Got it, I'll keep helping with short, direct responses." }] },
           ...conversationHistory,
         ],
       });
@@ -166,7 +1207,7 @@ Important: You're chatting with a homeowner who may be stressed about a home iss
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
-        content: "I'm having trouble connecting right now. Please try again in a moment.",
+        content: "Having trouble connecting. Try again in a moment.",
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, errorMessage]);
@@ -175,29 +1216,27 @@ Important: You're chatting with a homeowner who may be stressed about a home iss
     }
   };
 
-  const handleQuickAction = (action: typeof QUICK_ACTIONS[0]) => {
-    switch (action.id) {
-      case 'fix':
-        navigation.navigate('Diagnosis', { category: 'other' });
-        break;
-      case 'learn':
-        navigation.navigate('LearnIt' as any);
-        break;
-      case 'plan':
-        navigation.navigate('PlanIt' as any);
-        break;
-      case 'cost':
-        sendMessage("Can you help me estimate the cost for a home improvement project?");
-        break;
-      case 'safety':
-        sendMessage("What safety precautions should I take for DIY projects?");
-        break;
-      case 'find':
-        sendMessage("Where can I find parts and materials for home repairs?");
-        break;
-    }
+  // Quick Spot Check (from welcome screen)
+  const handleQuickSpotCheck = () => {
+    setActiveIntent(INTENT_TILES[0]); // Default to cooking context
+    setSelectedEnergy('quick');
+    setFlowState('capture');
+    setTimeout(() => setShowMediaOptions(true), 300);
   };
 
+  // Reset to start
+  const resetFlow = () => {
+    setFlowState('welcome');
+    setActiveIntent(null);
+    setSelectedEnergy(null);
+    setPendingIntent(null);
+    setCapturedImage(null);
+    setMessages([]);
+    setRecommendation(null);
+    setShowMediaOptions(false);
+  };
+
+  // Render message bubble
   const renderMessage = (message: Message) => {
     const isUser = message.role === 'user';
 
@@ -211,7 +1250,7 @@ Important: You're chatting with a homeowner who may be stressed about a home iss
       >
         {!isUser && (
           <View style={styles.assistantAvatar}>
-            <Text style={styles.avatarEmoji}>🏠</Text>
+            <Ionicons name="checkmark-circle" size={20} color="#fff" />
           </View>
         )}
         <View
@@ -220,6 +1259,9 @@ Important: You're chatting with a homeowner who may be stressed about a home iss
             isUser ? styles.userBubble : styles.assistantBubble,
           ]}
         >
+          {message.imageUri && (
+            <Image source={{ uri: message.imageUri }} style={styles.messageImage} />
+          )}
           <Text style={[styles.messageText, isUser && styles.userMessageText]}>
             {message.content}
           </Text>
@@ -228,10 +1270,10 @@ Important: You're chatting with a homeowner who may be stressed about a home iss
     );
   };
 
-  // Empty state / Welcome screen
+  // Welcome screen with intent tiles
   const renderWelcome = () => (
     <View style={styles.welcomeContainer}>
-      {/* Hero Gradient Area - Milky/airy gradient */}
+      {/* Hero Gradient Area */}
       <LinearGradient
         colors={['#0f172a', '#FF8B5E', '#D4E8ED']}
         start={{ x: 0.5, y: 0 }}
@@ -273,205 +1315,1225 @@ Important: You're chatting with a homeowner who may be stressed about a home iss
           activeOpacity={0.7}
         >
           <Ionicons name="chevron-back" size={28} color="#ffffff" />
-          <Text style={styles.backButtonText}>KanDu™</Text>
+          <Text style={styles.backButtonText}>KanDu</Text>
         </TouchableOpacity>
 
         {/* Hero Content */}
         <View style={styles.heroContent}>
           <HouseIcon
-            icon="chatbubbles"
-            size={84}
+            icon="bulb"
+            size={80}
             gradientColors={['#ffffff', '#fed7aa', '#fdba74']}
           />
-          <Text style={styles.heroTitle}>Hey there!</Text>
+          <Text style={styles.heroTitle}>What do you need to do?</Text>
           <Text style={styles.heroSubtitle}>
-            I'm KanDu, your AI home assistant. Ask me anything about home improvement!
+            Just show me — I'll help you decide
           </Text>
         </View>
       </LinearGradient>
 
-      {/* Quick Actions */}
-      <View style={styles.quickActionsSection}>
-        <Text style={styles.sectionTitle}>Quick Actions</Text>
-        <View style={styles.quickActionsGrid}>
-          {QUICK_ACTIONS.map((action) => (
+      {/* Intent Tiles */}
+      <View style={styles.intentSection}>
+        <View style={styles.intentGrid}>
+          {INTENT_TILES.map((tile) => (
             <TouchableOpacity
-              key={action.id}
-              style={styles.quickActionCard}
-              onPress={() => handleQuickAction(action)}
-              activeOpacity={0.7}
+              key={tile.id}
+              style={styles.intentTile}
+              onPress={() => handleIntentSelect(tile)}
+              activeOpacity={0.8}
             >
-              <View style={[styles.quickActionIcon, { backgroundColor: action.color }]}>
-                <Ionicons name={action.icon as any} size={24} color="#fff" />
-              </View>
-              <Text style={styles.quickActionLabel}>{action.label}</Text>
+              <LinearGradient
+                colors={tile.gradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.intentTileGradient}
+              >
+                {/* Checkmark watermark */}
+                <View style={styles.tileCheckmarkWatermark} pointerEvents="none">
+                  <Svg width={200} height={200} viewBox="0 0 100 100">
+                    <Path
+                      d="M25 50 L40 65 L75 30"
+                      fill="none"
+                      stroke="rgba(255, 255, 255, 0.08)"
+                      strokeWidth={18}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </Svg>
+                </View>
+                {/* Glass sheen */}
+                <LinearGradient
+                  colors={[
+                    'rgba(255,255,255,0.3)',
+                    'rgba(255,255,255,0.1)',
+                    'rgba(255,255,255,0)',
+                  ]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 1 }}
+                  style={StyleSheet.absoluteFill}
+                  pointerEvents="none"
+                />
+                <Ionicons name={tile.icon as any} size={36} color="#fff" />
+                <Text style={styles.intentTileLabel}>{tile.label}</Text>
+                <Text style={styles.intentTileSubtext}>{tile.subtext}</Text>
+              </LinearGradient>
             </TouchableOpacity>
           ))}
         </View>
       </View>
 
-      {/* Suggested Prompts */}
-      <View style={styles.suggestedSection}>
-        <Text style={styles.sectionTitle}>Try asking...</Text>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.suggestedScroll}
+      {/* Spot Check Section */}
+      <View style={styles.spotCheckSection}>
+        <Text style={styles.sectionTitle}>Spot Check</Text>
+        <Text style={styles.sectionSubtitle}>Quick check while you're working</Text>
+        <TouchableOpacity
+          style={styles.spotCheckButtonFull}
+          onPress={handleQuickSpotCheck}
+          activeOpacity={0.8}
         >
-          {SUGGESTED_PROMPTS.map((prompt, index) => (
-            <TouchableOpacity
-              key={index}
-              style={styles.suggestedChip}
-              onPress={() => sendMessage(prompt)}
-            >
-              <Text style={styles.suggestedText}>{prompt}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+          <LinearGradient
+            colors={['#64748b', '#475569']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.spotCheckButtonGradient}
+          >
+            <Ionicons name="camera" size={28} color="#fff" />
+            <Text style={styles.spotCheckButtonText}>Show me something</Text>
+          </LinearGradient>
+        </TouchableOpacity>
       </View>
     </View>
   );
+
+  // Capture screen (after energy selection)
+  const renderCapture = () => (
+    <View style={styles.captureContainer}>
+      <LinearGradient
+        colors={activeIntent?.gradient || ['#FF6B35', '#FFA500']}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
+        style={[styles.captureHero, { paddingTop: insets.top }]}
+      >
+        <LinearGradient
+          pointerEvents="none"
+          colors={[
+            'rgba(255,255,255,0.35)',
+            'rgba(255,255,255,0.14)',
+            'rgba(255,255,255,0.00)',
+          ]}
+          locations={[0, 0.45, 1]}
+          start={{ x: 0.2, y: 0 }}
+          end={{ x: 0.8, y: 1 }}
+          style={StyleSheet.absoluteFill}
+        />
+
+        <TouchableOpacity
+          onPress={resetFlow}
+          style={styles.backButton}
+          activeOpacity={0.7}
+        >
+          <Ionicons name="chevron-back" size={28} color="#ffffff" />
+          <Text style={styles.backButtonText}>Back</Text>
+        </TouchableOpacity>
+
+        <View style={styles.captureHeroContent}>
+          <Ionicons name="scan" size={56} color="#ffffff" />
+          <Text style={styles.captureTitle}>{activeIntent?.cameraPrompt}</Text>
+          <Text style={styles.captureSubtitle}>{activeIntent?.cameraSubtext}</Text>
+          <Text style={styles.energyBadge}>
+            {selectedEnergy === 'quick' ? '⚡ Keeping it simple' : '👍 Normal mode'}
+          </Text>
+        </View>
+      </LinearGradient>
+
+      <ScrollView style={styles.captureScrollView} contentContainerStyle={styles.captureScrollContent}>
+        {/* Primary Options Row */}
+        <View style={styles.captureOptionsRow}>
+          <TouchableOpacity style={styles.captureOption} onPress={startLiveScan}>
+            <View style={[styles.captureOptionIcon, { backgroundColor: '#10B981' }]}>
+              <Ionicons name="scan" size={28} color="#fff" />
+            </View>
+            <Text style={styles.captureOptionLabel}>Live Scan</Text>
+            <Text style={styles.captureOptionHint}>Real-time view</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.captureOption} onPress={takePhoto}>
+            <View style={[styles.captureOptionIcon, { backgroundColor: '#FF6B35' }]}>
+              <Ionicons name="camera" size={28} color="#fff" />
+            </View>
+            <Text style={styles.captureOptionLabel}>Take Photo</Text>
+            <Text style={styles.captureOptionHint}>Quick snap</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Video Options Row */}
+        <View style={styles.captureOptionsRow}>
+          <TouchableOpacity style={styles.captureOption} onPress={recordVideo}>
+            <View style={[styles.captureOptionIcon, { backgroundColor: '#EF4444' }]}>
+              <Ionicons name="videocam" size={28} color="#fff" />
+            </View>
+            <Text style={styles.captureOptionLabel}>Record Video</Text>
+            <Text style={styles.captureOptionHint}>Up to 60 sec</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={styles.captureOption} onPress={pickImage}>
+            <View style={[styles.captureOptionIcon, { backgroundColor: '#4A90E2' }]}>
+              <Ionicons name="folder-open" size={28} color="#fff" />
+            </View>
+            <Text style={styles.captureOptionLabel}>From Gallery</Text>
+            <Text style={styles.captureOptionHint}>Photo or video</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Upload Video Option */}
+        <TouchableOpacity style={styles.uploadVideoButton} onPress={pickVideo}>
+          <Ionicons name="cloud-upload-outline" size={22} color="#64748b" />
+          <Text style={styles.uploadVideoText}>Upload video from gallery</Text>
+        </TouchableOpacity>
+      </ScrollView>
+
+      {/* Video Compression Modal */}
+      <VideoCompressionModal
+        visible={isCompressing}
+        progress={compressionProgress}
+        status={compressionStatus}
+      />
+    </View>
+  );
+
+  // Live Scan screen - real-time camera view
+  const renderLiveScan = () => {
+    const handleBackPress = () => {
+      console.log('[LiveScan] Back button pressed');
+      // Clean up if scanning
+      if (scanIntervalRef.current) {
+        clearInterval(scanIntervalRef.current);
+        scanIntervalRef.current = null;
+      }
+      setIsScanning(false);
+      setScannedFrames([]); // Clear frames when going back
+      setFlowState('capture');
+    };
+
+    const handleDone = () => {
+      console.log('[LiveScan] Done pressed with', scannedFrames.length, 'frames');
+      if (scannedFrames.length > 0) {
+        setCapturedImage(scannedFrames[0]);
+        setFlowState('analyzing');
+        if (scannedFrames.length === 1) {
+          analyzeImage(scannedFrames[0]);
+        } else {
+          analyzeMultipleImages(scannedFrames);
+        }
+      }
+    };
+
+    const hasPhotos = scannedFrames.length > 0;
+
+    return (
+      <View style={styles.liveScanContainer}>
+        <CameraView
+          ref={cameraRef}
+          style={styles.liveScanCamera}
+          facing="back"
+          onCameraReady={handleCameraReady}
+        />
+
+        {/* Corner guides - positioned absolutely, pointer events disabled */}
+        <View style={styles.liveScanGuides} pointerEvents="none">
+          <View style={[styles.liveScanCorner, styles.liveScanCornerTL]} />
+          <View style={[styles.liveScanCorner, styles.liveScanCornerTR]} />
+          <View style={[styles.liveScanCorner, styles.liveScanCornerBL]} />
+          <View style={[styles.liveScanCorner, styles.liveScanCornerBR]} />
+        </View>
+
+        {/* Top overlay with back button and instructions */}
+        <LinearGradient
+          colors={['rgba(0,0,0,0.6)', 'transparent']}
+          style={[styles.liveScanTopOverlay, { paddingTop: insets.top }]}
+          pointerEvents="box-none"
+        >
+          <TouchableOpacity
+            onPress={handleBackPress}
+            style={styles.liveScanBackButton}
+            activeOpacity={0.7}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+          >
+            <Ionicons name="chevron-back" size={28} color="#ffffff" />
+            <Text style={styles.liveScanBackText}>Back</Text>
+          </TouchableOpacity>
+          <View style={styles.liveScanHeader} pointerEvents="none">
+            <Text style={styles.liveScanTitle}>{activeIntent?.cameraPrompt}</Text>
+            <Text style={styles.liveScanSubtitle}>
+              {isScanning
+                ? `Scanning... (${scannedFrames.length} captured)`
+                : hasPhotos
+                  ? `${scannedFrames.length} photo${scannedFrames.length > 1 ? 's' : ''} - tap for more or Done`
+                  : 'Tap or hold to scan'}
+            </Text>
+          </View>
+        </LinearGradient>
+
+        {/* Photo count badge - shows thumbnails when photos exist */}
+        {hasPhotos && !isScanning && (
+          <View style={styles.photoCountBadge}>
+            <View style={styles.photoThumbnailStack}>
+              {scannedFrames.slice(-3).map((uri, index) => (
+                <Image
+                  key={index}
+                  source={{ uri }}
+                  style={[
+                    styles.photoThumbnail,
+                    { marginLeft: index > 0 ? -12 : 0, zIndex: index }
+                  ]}
+                />
+              ))}
+            </View>
+            <Text style={styles.photoCountText}>
+              {scannedFrames.length} scanned
+            </Text>
+          </View>
+        )}
+
+        {/* Bottom overlay with capture button */}
+        <LinearGradient
+          colors={['transparent', 'rgba(0,0,0,0.7)']}
+          style={[styles.liveScanBottomOverlay, { paddingBottom: Math.max(insets.bottom, 20) }]}
+          pointerEvents="box-none"
+        >
+          {/* Energy badge - hide when photos exist to make room */}
+          {!hasPhotos && (
+            <View style={styles.liveScanEnergyBadge} pointerEvents="none">
+              <Ionicons
+                name={selectedEnergy === 'quick' ? 'flash' : 'time'}
+                size={16}
+                color="#ffffff"
+              />
+              <Text style={styles.liveScanEnergyText}>
+                {selectedEnergy === 'quick' ? 'Keeping it simple' : 'Normal mode'}
+              </Text>
+            </View>
+          )}
+
+          {/* Frame counter when scanning */}
+          {isScanning && scannedFrames.length > 0 && (
+            <View style={styles.frameCounter} pointerEvents="none">
+              {scannedFrames.map((_, index) => (
+                <View key={index} style={styles.frameDot} />
+              ))}
+            </View>
+          )}
+
+          {/* Bottom action area - capture button and Done button */}
+          <View style={styles.liveScanActionRow}>
+            {/* Capture button - tap for single, hold for multi-shot */}
+            <TouchableOpacity
+              style={[
+                styles.liveScanCaptureButton,
+                isScanning && styles.liveScanCaptureButtonActive,
+                !isCameraReady && styles.liveScanCaptureButtonDisabled,
+              ]}
+              onPressIn={isCameraReady ? handlePressIn : undefined}
+              onPressOut={isCameraReady ? handlePressOut : undefined}
+              onLongPress={isCameraReady ? handleLongPress : undefined}
+              activeOpacity={0.9}
+              delayLongPress={300}
+              disabled={!isCameraReady}
+            >
+              <View style={[
+                styles.liveScanCaptureOuter,
+                isScanning && styles.liveScanCaptureOuterActive,
+                !isCameraReady && styles.liveScanCaptureOuterDisabled,
+              ]}>
+                <LinearGradient
+                  colors={isScanning
+                    ? ['#EF4444', '#DC2626']
+                    : !isCameraReady
+                      ? ['#94a3b8', '#64748b']
+                      : (activeIntent?.gradient || ['#10B981', '#059669'])}
+                  style={styles.liveScanCaptureInner}
+                >
+                  {!isCameraReady ? (
+                    <ActivityIndicator size={28} color="#ffffff" />
+                  ) : (
+                    <Ionicons
+                      name={isScanning ? 'radio-button-on' : hasPhotos ? 'add' : 'scan'}
+                      size={32}
+                      color="#ffffff"
+                    />
+                  )}
+                </LinearGradient>
+              </View>
+            </TouchableOpacity>
+
+            {/* Done button - only shows when photos exist */}
+            {hasPhotos && !isScanning && (
+              <TouchableOpacity
+                style={styles.liveScanDoneButton}
+                onPress={handleDone}
+                activeOpacity={0.8}
+              >
+                <LinearGradient
+                  colors={activeIntent?.gradient || ['#10B981', '#059669']}
+                  style={styles.liveScanDoneGradient}
+                >
+                  <Ionicons name="checkmark" size={24} color="#ffffff" />
+                  <Text style={styles.liveScanDoneText}>Done</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <Text style={styles.liveScanCaptureHint} pointerEvents="none">
+            {!isCameraReady
+              ? 'Initializing camera...'
+              : isScanning
+                ? 'Release when done'
+                : hasPhotos
+                  ? 'Scan more areas or tap Done'
+                  : 'Tap or hold to scan'}
+          </Text>
+        </LinearGradient>
+      </View>
+    );
+  };
+
+  // Review screen - shows captured images with option to scan more or analyze
+  const renderReview = () => {
+    const imageCount = scannedFrames.length;
+
+    const handleScanMore = () => {
+      // Reset camera ready state and go back to live scan
+      setIsCameraReady(false);
+      setFlowState('liveScan');
+    };
+
+    const handleAnalyze = () => {
+      setFlowState('analyzing');
+      if (scannedFrames.length === 1) {
+        analyzeImage(scannedFrames[0]);
+      } else {
+        analyzeMultipleImages(scannedFrames);
+      }
+    };
+
+    return (
+      <View style={styles.reviewContainer}>
+        <LinearGradient
+          colors={activeIntent?.gradient || ['#FF6B35', '#FFA500']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.reviewHeader, { paddingTop: insets.top }]}
+        >
+          <TouchableOpacity
+            onPress={() => {
+              setScannedFrames([]);
+              setCapturedImage(null);
+              setFlowState('liveScan');
+            }}
+            style={styles.reviewBackButton}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="chevron-back" size={24} color="#ffffff" />
+            <Text style={styles.reviewBackText}>Retake</Text>
+          </TouchableOpacity>
+          <Text style={styles.reviewTitle}>
+            {imageCount} {imageCount === 1 ? 'photo' : 'photos'} captured
+          </Text>
+          <Text style={styles.reviewSubtitle}>
+            Scan more areas or analyze now
+          </Text>
+        </LinearGradient>
+
+        {/* Image thumbnails */}
+        <ScrollView
+          style={styles.reviewScrollView}
+          contentContainerStyle={styles.reviewScrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.reviewImageGrid}>
+            {scannedFrames.map((uri, index) => (
+              <View key={index} style={styles.reviewImageWrapper}>
+                <Image source={{ uri }} style={styles.reviewImage} />
+                <View style={styles.reviewImageNumber}>
+                  <Text style={styles.reviewImageNumberText}>{index + 1}</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.reviewImageDelete}
+                  onPress={() => {
+                    const newFrames = scannedFrames.filter((_, i) => i !== index);
+                    setScannedFrames(newFrames);
+                    if (newFrames.length === 0) {
+                      setFlowState('liveScan');
+                    } else {
+                      setCapturedImage(newFrames[0]);
+                    }
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="close-circle" size={24} color="#ffffff" />
+                </TouchableOpacity>
+              </View>
+            ))}
+          </View>
+
+          {/* Helpful text */}
+          <View style={styles.reviewHelpSection}>
+            <Ionicons name="bulb-outline" size={20} color="#64748b" />
+            <Text style={styles.reviewHelpText}>
+              Tip: Scan your fridge, pantry, and cabinets for better suggestions!
+            </Text>
+          </View>
+        </ScrollView>
+
+        {/* Action buttons */}
+        <View style={styles.reviewActions}>
+          <TouchableOpacity
+            style={styles.reviewScanMoreButton}
+            onPress={handleScanMore}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="add-circle-outline" size={24} color={activeIntent?.gradient[0] || '#FF6B35'} />
+            <Text style={[styles.reviewScanMoreText, { color: activeIntent?.gradient[0] || '#FF6B35' }]}>
+              Scan More
+            </Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.reviewAnalyzeButton, { backgroundColor: activeIntent?.gradient[0] || '#FF6B35' }]}
+            onPress={handleAnalyze}
+            activeOpacity={0.8}
+          >
+            <Ionicons name="sparkles" size={24} color="#ffffff" />
+            <Text style={styles.reviewAnalyzeText}>
+              Find Recipes
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
+  // Analyzing screen
+  const renderAnalyzing = () => {
+    const imageCount = scannedFrames.length || (capturedImage ? 1 : 0);
+
+    return (
+      <View style={styles.analyzingContainer}>
+        <LinearGradient
+          colors={activeIntent?.gradient || ['#FF6B35', '#FFA500']}
+          start={{ x: 0.5, y: 0 }}
+          end={{ x: 0.5, y: 1 }}
+          style={[styles.analyzingGradient, { paddingTop: insets.top }]}
+        >
+          <View style={styles.analyzingContent}>
+            {capturedImage && (
+              <View style={styles.analyzingImageContainer}>
+                <Image source={{ uri: capturedImage }} style={styles.analyzingImage} />
+                {imageCount > 1 && (
+                  <View style={styles.imageCountBadge}>
+                    <Text style={styles.imageCountText}>{imageCount} images</Text>
+                  </View>
+                )}
+              </View>
+            )}
+            <ActivityIndicator size="large" color="#ffffff" style={styles.analyzingSpinner} />
+            <Text style={styles.analyzingText}>
+              {imageCount > 1 ? `Analyzing ${imageCount} images...` : 'Looking at what you have...'}
+            </Text>
+            <Text style={styles.analyzingSubtext}>Finding the best option</Text>
+          </View>
+        </LinearGradient>
+      </View>
+    );
+  };
+
+  // Options screen - shows recipe/task cards
+  const renderOptions = () => {
+    // Filter options based on mood filter
+    const filteredOptions = activeMoodFilter === 'all'
+      ? recipeOptions
+      : recipeOptions.filter(opt => opt.mood === activeMoodFilter);
+
+    return (
+      <View style={styles.optionsContainer}>
+        {/* Header */}
+        <LinearGradient
+          colors={activeIntent?.gradient || ['#FF6B35', '#FFA500']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.optionsHeader, { paddingTop: insets.top }]}
+        >
+          <View style={styles.optionsHeaderRow}>
+            <TouchableOpacity
+              onPress={resetFlow}
+              style={styles.optionsBackButton}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="chevron-back" size={24} color="#ffffff" />
+            </TouchableOpacity>
+            <View style={styles.optionsHeaderCenter}>
+              <Text style={styles.optionsHeaderTitle}>Pick your meal</Text>
+              <Text style={styles.optionsHeaderSubtitle}>
+                {selectedServings ? `Serves ${selectedServings}` : ''} {selectedEnergy === 'quick' ? '• Quick mode' : ''}
+              </Text>
+            </View>
+            <TouchableOpacity
+              onPress={() => setFlowState('capture')}
+              style={styles.optionsRescanButton}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="refresh" size={22} color="#ffffff" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Mood filter chips */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.moodFilterContainer}
+          >
+            {MOOD_FILTERS.map((filter) => (
+              <TouchableOpacity
+                key={filter.id}
+                style={[
+                  styles.moodFilterChip,
+                  activeMoodFilter === filter.id && styles.moodFilterChipActive,
+                ]}
+                onPress={() => setActiveMoodFilter(filter.id)}
+                activeOpacity={0.8}
+              >
+                <Ionicons
+                  name={filter.icon as any}
+                  size={16}
+                  color={activeMoodFilter === filter.id ? '#ffffff' : 'rgba(255,255,255,0.8)'}
+                />
+                <Text style={[
+                  styles.moodFilterText,
+                  activeMoodFilter === filter.id && styles.moodFilterTextActive,
+                ]}>
+                  {filter.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </LinearGradient>
+
+        {/* Recipe Cards */}
+        <ScrollView
+          style={styles.optionsScrollView}
+          contentContainerStyle={styles.optionsScrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {filteredOptions.length > 0 ? (
+            filteredOptions.map((option, index) => (
+              <TouchableOpacity
+                key={option.id}
+                style={styles.recipeCard}
+                onPress={() => {
+                  setSelectedRecipe(option);
+                  setFlowState('detail');
+                }}
+                activeOpacity={0.9}
+              >
+                <View style={styles.recipeCardHeader}>
+                  <View style={[
+                    styles.recipeCardIcon,
+                    { backgroundColor: activeIntent?.gradient[0] || '#FF6B35' }
+                  ]}>
+                    <Ionicons name={option.icon as any} size={24} color="#ffffff" />
+                  </View>
+                  <View style={styles.recipeCardMeta}>
+                    <View style={styles.recipeCardBadges}>
+                      <View style={styles.recipeTimeBadge}>
+                        <Ionicons name="time-outline" size={14} color="#64748b" />
+                        <Text style={styles.recipeTimeText}>{option.time}</Text>
+                      </View>
+                      <View style={[
+                        styles.recipeDifficultyBadge,
+                        option.difficulty === 'Easy' && styles.difficultyEasy,
+                        option.difficulty === 'Medium' && styles.difficultyMedium,
+                        option.difficulty === 'Moderate' && styles.difficultyModerate,
+                      ]}>
+                        <Text style={styles.recipeDifficultyText}>{option.difficulty}</Text>
+                      </View>
+                    </View>
+                  </View>
+                </View>
+
+                <Text style={styles.recipeCardName}>{option.name}</Text>
+                <Text style={styles.recipeCardTagline}>{option.tagline}</Text>
+
+                {/* Ingredient preview */}
+                <View style={styles.ingredientPreview}>
+                  {option.ingredients.slice(0, 4).map((ing, i) => (
+                    <View key={i} style={styles.ingredientChip}>
+                      <Text style={styles.ingredientChipText}>{ing}</Text>
+                    </View>
+                  ))}
+                  {option.ingredients.length > 4 && (
+                    <View style={styles.ingredientChipMore}>
+                      <Text style={styles.ingredientChipMoreText}>+{option.ingredients.length - 4}</Text>
+                    </View>
+                  )}
+                </View>
+
+                {/* Card number indicator */}
+                <View style={styles.recipeCardNumber}>
+                  <Text style={styles.recipeCardNumberText}>{index + 1}</Text>
+                </View>
+              </TouchableOpacity>
+            ))
+          ) : (
+            <View style={styles.noOptionsMessage}>
+              <Ionicons name="search" size={48} color="#cbd5e1" />
+              <Text style={styles.noOptionsText}>No matches for this filter</Text>
+              <TouchableOpacity onPress={() => setActiveMoodFilter('all')}>
+                <Text style={styles.noOptionsLink}>Show all options</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Refine Section */}
+          <View style={styles.refineSection}>
+            <Text style={styles.refineSectionTitle}>Not quite right?</Text>
+
+            {/* Quick feedback input */}
+            <View style={styles.feedbackInputContainer}>
+              <TextInput
+                style={styles.feedbackInput}
+                placeholder="Tell us what you want instead..."
+                placeholderTextColor="#94a3b8"
+                value={feedbackText}
+                onChangeText={setFeedbackText}
+                multiline={false}
+                returnKeyType="send"
+                onSubmitEditing={() => {
+                  if (feedbackText.trim()) {
+                    regenerateWithRefinements(feedbackText.trim());
+                  }
+                }}
+              />
+              <TouchableOpacity
+                style={[
+                  styles.feedbackSubmitButton,
+                  !feedbackText.trim() && styles.feedbackSubmitButtonDisabled,
+                ]}
+                onPress={() => {
+                  if (feedbackText.trim()) {
+                    regenerateWithRefinements(feedbackText.trim());
+                  }
+                }}
+                disabled={!feedbackText.trim() || isRegenerating}
+              >
+                {isRegenerating ? (
+                  <ActivityIndicator size={18} color="#ffffff" />
+                ) : (
+                  <Ionicons name="arrow-forward" size={18} color="#ffffff" />
+                )}
+              </TouchableOpacity>
+            </View>
+
+            {/* Refine button */}
+            <TouchableOpacity
+              style={styles.refineButton}
+              onPress={() => setShowRefineModal(true)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="options-outline" size={20} color="#64748b" />
+              <Text style={styles.refineButtonText}>Refine with more options</Text>
+              <Ionicons name="chevron-forward" size={18} color="#94a3b8" />
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+
+        {/* Refine Modal */}
+        <Modal
+          visible={showRefineModal}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setShowRefineModal(false)}
+        >
+          <View style={styles.refineModalOverlay}>
+            <View style={styles.refineModalContainer}>
+              {/* Header */}
+              <View style={styles.refineModalHeader}>
+                <TouchableOpacity
+                  onPress={() => setShowRefineModal(false)}
+                  style={styles.refineModalClose}
+                >
+                  <Ionicons name="close" size={24} color="#64748b" />
+                </TouchableOpacity>
+                <Text style={styles.refineModalTitle}>Refine Results</Text>
+                <View style={{ width: 24 }} />
+              </View>
+
+              <ScrollView style={styles.refineModalScroll} showsVerticalScrollIndicator={false}>
+                {/* Skill Level */}
+                <Text style={styles.refineOptionTitle}>Your cooking skill</Text>
+                <View style={styles.refineOptionRow}>
+                  {SKILL_LEVEL_OPTIONS.map((option) => (
+                    <TouchableOpacity
+                      key={option.id}
+                      style={[
+                        styles.refineChip,
+                        selectedSkillLevel === option.id && styles.refineChipSelected,
+                      ]}
+                      onPress={() => setSelectedSkillLevel(
+                        selectedSkillLevel === option.id ? null : option.id
+                      )}
+                    >
+                      <Ionicons
+                        name={option.icon as any}
+                        size={16}
+                        color={selectedSkillLevel === option.id ? '#ffffff' : '#64748b'}
+                      />
+                      <Text style={[
+                        styles.refineChipText,
+                        selectedSkillLevel === option.id && styles.refineChipTextSelected,
+                      ]}>
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Cuisine */}
+                <Text style={styles.refineOptionTitle}>Cuisine style</Text>
+                <View style={styles.refineOptionRow}>
+                  {CUISINE_OPTIONS.map((option) => (
+                    <TouchableOpacity
+                      key={option.id}
+                      style={[
+                        styles.refineChip,
+                        selectedCuisine === option.id && styles.refineChipSelected,
+                      ]}
+                      onPress={() => setSelectedCuisine(
+                        selectedCuisine === option.id ? null : option.id
+                      )}
+                    >
+                      <Ionicons
+                        name={option.icon as any}
+                        size={16}
+                        color={selectedCuisine === option.id ? '#ffffff' : '#64748b'}
+                      />
+                      <Text style={[
+                        styles.refineChipText,
+                        selectedCuisine === option.id && styles.refineChipTextSelected,
+                      ]}>
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Dietary */}
+                <Text style={styles.refineOptionTitle}>Dietary needs (select all that apply)</Text>
+                <View style={styles.refineOptionRow}>
+                  {DIETARY_OPTIONS.map((option) => (
+                    <TouchableOpacity
+                      key={option.id}
+                      style={[
+                        styles.refineChip,
+                        selectedDietary.includes(option.id) && styles.refineChipSelected,
+                      ]}
+                      onPress={() => {
+                        if (selectedDietary.includes(option.id)) {
+                          setSelectedDietary(selectedDietary.filter(d => d !== option.id));
+                        } else {
+                          setSelectedDietary([...selectedDietary, option.id]);
+                        }
+                      }}
+                    >
+                      <Ionicons
+                        name={option.icon as any}
+                        size={16}
+                        color={selectedDietary.includes(option.id) ? '#ffffff' : '#64748b'}
+                      />
+                      <Text style={[
+                        styles.refineChipText,
+                        selectedDietary.includes(option.id) && styles.refineChipTextSelected,
+                      ]}>
+                        {option.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </ScrollView>
+
+              {/* Apply button */}
+              <TouchableOpacity
+                style={styles.refineApplyButton}
+                onPress={() => regenerateWithRefinements()}
+                disabled={isRegenerating}
+              >
+                <LinearGradient
+                  colors={activeIntent?.gradient || ['#FF6B35', '#FFA500']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.refineApplyGradient}
+                >
+                  {isRegenerating ? (
+                    <ActivityIndicator size={20} color="#ffffff" />
+                  ) : (
+                    <>
+                      <Ionicons name="refresh" size={20} color="#ffffff" />
+                      <Text style={styles.refineApplyText}>Get New Suggestions</Text>
+                    </>
+                  )}
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      </View>
+    );
+  };
+
+  // Detail screen - full recipe view
+  const renderDetail = () => {
+    if (!selectedRecipe) return null;
+
+    return (
+      <View style={styles.detailContainer}>
+        {/* Header */}
+        <LinearGradient
+          colors={activeIntent?.gradient || ['#FF6B35', '#FFA500']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.detailHeader, { paddingTop: insets.top }]}
+        >
+          <View style={styles.detailHeaderRow}>
+            <TouchableOpacity
+              onPress={() => setFlowState('options')}
+              style={styles.detailBackButton}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="chevron-back" size={24} color="#ffffff" />
+              <Text style={styles.detailBackText}>Options</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.detailHeroContent}>
+            <View style={styles.detailIconLarge}>
+              <Ionicons name={selectedRecipe.icon as any} size={40} color="#ffffff" />
+            </View>
+            <Text style={styles.detailTitle}>{selectedRecipe.name}</Text>
+            <Text style={styles.detailTagline}>{selectedRecipe.tagline}</Text>
+
+            <View style={styles.detailMetaRow}>
+              <View style={styles.detailMetaItem}>
+                <Ionicons name="time-outline" size={18} color="rgba(255,255,255,0.9)" />
+                <Text style={styles.detailMetaText}>{selectedRecipe.time}</Text>
+              </View>
+              <View style={styles.detailMetaDivider} />
+              <View style={styles.detailMetaItem}>
+                <Ionicons name="speedometer-outline" size={18} color="rgba(255,255,255,0.9)" />
+                <Text style={styles.detailMetaText}>{selectedRecipe.difficulty}</Text>
+              </View>
+              {selectedServings && (
+                <>
+                  <View style={styles.detailMetaDivider} />
+                  <View style={styles.detailMetaItem}>
+                    <Ionicons name="people-outline" size={18} color="rgba(255,255,255,0.9)" />
+                    <Text style={styles.detailMetaText}>Serves {selectedServings}</Text>
+                  </View>
+                </>
+              )}
+            </View>
+          </View>
+        </LinearGradient>
+
+        {/* Content */}
+        <ScrollView
+          style={styles.detailScrollView}
+          contentContainerStyle={styles.detailScrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Ingredients */}
+          <View style={styles.detailSection}>
+            <Text style={styles.detailSectionTitle}>Ingredients</Text>
+            <View style={styles.ingredientsList}>
+              {selectedRecipe.ingredients.map((ing, i) => (
+                <View key={i} style={styles.ingredientRow}>
+                  <View style={styles.ingredientBullet} />
+                  <Text style={styles.ingredientText}>{ing}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+
+          {/* Steps */}
+          <View style={styles.detailSection}>
+            <Text style={styles.detailSectionTitle}>Steps</Text>
+            {selectedRecipe.steps.map((step, i) => (
+              <View key={i} style={styles.stepRow}>
+                <View style={[styles.stepNumber, { backgroundColor: activeIntent?.gradient[0] || '#FF6B35' }]}>
+                  <Text style={styles.stepNumberText}>{i + 1}</Text>
+                </View>
+                <Text style={styles.stepText}>{step}</Text>
+              </View>
+            ))}
+          </View>
+
+          {/* Tips */}
+          {selectedRecipe.tips && (
+            <View style={styles.tipsCard}>
+              <View style={styles.tipsHeader}>
+                <Ionicons name="bulb" size={20} color="#f59e0b" />
+                <Text style={styles.tipsTitle}>Pro Tip</Text>
+              </View>
+              <Text style={styles.tipsText}>{selectedRecipe.tips}</Text>
+            </View>
+          )}
+
+          {/* Start Cooking button */}
+          <TouchableOpacity
+            style={[styles.startCookingButton, { backgroundColor: activeIntent?.gradient[0] || '#FF6B35' }]}
+            onPress={() => Alert.alert('Coming Soon', 'Step-by-step cooking mode coming soon!')}
+            activeOpacity={0.9}
+          >
+            <Ionicons name="play" size={24} color="#ffffff" />
+            <Text style={styles.startCookingText}>Start Cooking</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      </View>
+    );
+  };
+
+  // Context picker modal - energy, servings, meal type, optional household
+  const renderContextPicker = () => {
+    const isCooking = pendingIntent?.id === 'cooking';
+
+    // Check if we can proceed (energy selected, and servings + meal type if cooking)
+    const canProceed = selectedEnergy && (!isCooking || (selectedServings && selectedMealType));
+
+    return (
+      <Modal
+        visible={showContextPicker}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          setShowContextPicker(false);
+          setSelectedEnergy(null);
+          setSelectedServings(null);
+          setSelectedMealType(null);
+        }}
+      >
+        <View style={styles.contextPickerOverlay}>
+          <View style={styles.contextPickerContainer}>
+            {/* Header */}
+            <View style={styles.contextPickerHeader}>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowContextPicker(false);
+                  setSelectedEnergy(null);
+                  setSelectedServings(null);
+                  setSelectedMealType(null);
+                }}
+                style={styles.contextPickerClose}
+              >
+                <Ionicons name="close" size={24} color="#64748b" />
+              </TouchableOpacity>
+              <Text style={styles.contextPickerTitle}>
+                {isCooking ? "Let's cook!" : `Let's ${pendingIntent?.id || 'go'}!`}
+              </Text>
+              <View style={{ width: 24 }} />
+            </View>
+
+            <ScrollView
+              style={styles.contextPickerScroll}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Energy Level Section */}
+              <Text style={styles.contextSectionTitle}>What's your energy like?</Text>
+              <View style={styles.energyOptions}>
+                {ENERGY_OPTIONS.map((option) => (
+                  <TouchableOpacity
+                    key={option.id}
+                    style={[
+                      styles.energyOption,
+                      selectedEnergy === option.id && styles.energyOptionSelected,
+                    ]}
+                    onPress={() => setSelectedEnergy(option.id)}
+                    activeOpacity={0.8}
+                  >
+                    <LinearGradient
+                      colors={option.id === 'quick' ? ['#f59e0b', '#d97706'] : ['#10b981', '#059669']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                      style={[
+                        styles.energyOptionGradient,
+                        selectedEnergy === option.id && styles.energyOptionGradientSelected,
+                      ]}
+                    >
+                      <Ionicons name={option.icon as any} size={28} color="#fff" />
+                      <Text style={styles.energyOptionLabel}>{option.label}</Text>
+                      <Text style={styles.energyOptionSubtext}>{option.subtext}</Text>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              {/* Meal Type Section - only for cooking */}
+              {isCooking && (
+                <>
+                  <Text style={styles.contextSectionTitle}>What meal is this?</Text>
+                  <View style={styles.mealTypeOptions}>
+                    {MEAL_TYPE_OPTIONS.map((option) => (
+                      <TouchableOpacity
+                        key={option.id}
+                        style={[
+                          styles.mealTypeOption,
+                          selectedMealType === option.id && [styles.mealTypeOptionSelected, { borderColor: option.color }],
+                        ]}
+                        onPress={() => setSelectedMealType(option.id)}
+                        activeOpacity={0.8}
+                      >
+                        <Ionicons
+                          name={option.icon as any}
+                          size={20}
+                          color={selectedMealType === option.id ? option.color : '#64748b'}
+                        />
+                        <Text style={[
+                          styles.mealTypeLabel,
+                          selectedMealType === option.id && { color: option.color },
+                        ]}>
+                          {option.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
+
+              {/* Servings Section - only for cooking */}
+              {isCooking && (
+                <>
+                  <Text style={styles.contextSectionTitle}>How many servings?</Text>
+                  <View style={styles.servingsOptions}>
+                    {SERVING_OPTIONS.map((option) => (
+                      <TouchableOpacity
+                        key={option.id}
+                        style={[
+                          styles.servingOption,
+                          selectedServings === option.id && styles.servingOptionSelected,
+                        ]}
+                        onPress={() => setSelectedServings(option.id)}
+                        activeOpacity={0.8}
+                      >
+                        <Text style={[
+                          styles.servingLabel,
+                          selectedServings === option.id && styles.servingLabelSelected,
+                        ]}>
+                          {option.label}
+                        </Text>
+                        <Text style={[
+                          styles.servingSubtext,
+                          selectedServings === option.id && styles.servingSubtextSelected,
+                        ]}>
+                          {option.subtext}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
+              )}
+
+              {/* Optional Household Setup - clearly skippable */}
+              {isCooking && (
+                <TouchableOpacity
+                  style={styles.householdSetupButton}
+                  onPress={() => {
+                    setShowContextPicker(false);
+                    navigation.navigate('HouseholdSetup');
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.householdSetupContent}>
+                    <Ionicons name="people-outline" size={20} color="#64748b" />
+                    <View style={styles.householdSetupText}>
+                      <Text style={styles.householdSetupLabel}>Set up household members</Text>
+                      <Text style={styles.householdSetupHint}>Optional - save preferences for your family</Text>
+                    </View>
+                    <Ionicons name="chevron-forward" size={20} color="#94a3b8" />
+                  </View>
+                </TouchableOpacity>
+              )}
+            </ScrollView>
+
+            {/* Continue Button */}
+            <TouchableOpacity
+              style={[
+                styles.contextContinueButton,
+                !canProceed && styles.contextContinueButtonDisabled,
+              ]}
+              onPress={() => {
+                if (canProceed) {
+                  handleEnergySelect(selectedEnergy!);
+                }
+              }}
+              disabled={!canProceed}
+              activeOpacity={0.8}
+            >
+              <LinearGradient
+                colors={canProceed
+                  ? (pendingIntent?.gradient || ['#FF6B35', '#FF8C42'])
+                  : ['#94a3b8', '#94a3b8']
+                }
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.contextContinueGradient}
+              >
+                <Text style={styles.contextContinueText}>
+                  {isCooking ? 'Scan my kitchen' : 'Continue'}
+                </Text>
+                <Ionicons name="arrow-forward" size={20} color="#fff" />
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+    );
+  };
+
+  // Determine what to show based on flow state
+  const renderContent = () => {
+    switch (flowState) {
+      case 'welcome':
+        return (
+          <ScrollView
+            style={styles.scrollView}
+            contentContainerStyle={styles.welcomeScrollContent}
+            showsVerticalScrollIndicator={false}
+          >
+            {renderWelcome()}
+          </ScrollView>
+        );
+      case 'capture':
+        return renderCapture();
+      case 'liveScan':
+        return renderLiveScan();
+      case 'review':
+        return renderReview();
+      case 'analyzing':
+        return renderAnalyzing();
+      case 'options':
+        return renderOptions();
+      case 'detail':
+        return renderDetail();
+      default:
+        return null;
+    }
+  };
 
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
     >
-      {/* Always show Welcome/Hero when no messages */}
-      {messages.length === 0 ? (
-        <ScrollView
-          ref={scrollViewRef}
-          style={styles.scrollView}
-          contentContainerStyle={styles.welcomeScrollContent}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-        >
-          {renderWelcome()}
-        </ScrollView>
-      ) : (
-        <>
-          {/* Mini Hero for Chat Mode */}
-          <LinearGradient
-            colors={['#0f172a', '#FF8B5E', '#D4E8ED']}
-            start={{ x: 0.5, y: 0 }}
-            end={{ x: 0.5, y: 1 }}
-            style={[styles.chatHeroGradient, { paddingTop: insets.top }]}
-          >
-            {/* Glass sheen overlay */}
-            <LinearGradient
-              pointerEvents="none"
-              colors={[
-                'rgba(255,255,255,0.35)',
-                'rgba(255,255,255,0.14)',
-                'rgba(255,255,255,0.00)',
-              ]}
-              locations={[0, 0.45, 1]}
-              start={{ x: 0.2, y: 0 }}
-              end={{ x: 0.8, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-
-            {/* Back Button */}
-            <TouchableOpacity
-              onPress={() => navigation.goBack()}
-              style={styles.backButton}
-              activeOpacity={0.7}
-            >
-              <Ionicons name="chevron-back" size={28} color="#ffffff" />
-              <Text style={styles.backButtonText}>KanDu™</Text>
-            </TouchableOpacity>
-
-            {/* Chat Header */}
-            <View style={styles.chatHeaderRow}>
-              <View style={styles.chatHeaderIcon}>
-                <Text style={styles.chatHeaderEmoji}>🏠</Text>
-              </View>
-              <Text style={styles.chatHeaderTitle}>KanDu Assistant</Text>
-            </View>
-          </LinearGradient>
-
-          <ScrollView
-            ref={scrollViewRef}
-            style={styles.scrollView}
-            contentContainerStyle={styles.scrollContent}
-            showsVerticalScrollIndicator={false}
-            keyboardShouldPersistTaps="handled"
-          >
-
-            {/* Messages */}
-            {messages.map(renderMessage)}
-
-            {/* Loading indicator */}
-            {loading && (
-              <View style={styles.loadingContainer}>
-                <View style={styles.assistantAvatar}>
-                  <Text style={styles.avatarEmoji}>🏠</Text>
-                </View>
-                <View style={styles.loadingBubble}>
-                  <ActivityIndicator size="small" color="#FF6B35" />
-                  <Text style={styles.loadingText}>Thinking...</Text>
-                </View>
-              </View>
-            )}
-
-            {/* Quick Actions in Chat */}
-            {!keyboardVisible && messages.length > 0 && !loading && (
-              <View style={styles.chatQuickActions}>
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.chatQuickActionsScroll}
-                >
-                  {QUICK_ACTIONS.slice(0, 4).map((action) => (
-                    <TouchableOpacity
-                      key={action.id}
-                      style={styles.chatQuickActionChip}
-                      onPress={() => handleQuickAction(action)}
-                    >
-                      <Ionicons name={action.icon as any} size={16} color={action.color} />
-                      <Text style={[styles.chatQuickActionText, { color: action.color }]}>
-                        {action.label}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </View>
-            )}
-          </ScrollView>
-        </>
-      )}
-
-      {/* Input Area */}
-      <View style={styles.inputContainer}>
-        <View style={styles.inputWrapper}>
-          <TextInput
-            style={styles.input}
-            placeholder="Ask me anything about home improvement..."
-            placeholderTextColor="#94a3b8"
-            value={inputText}
-            onChangeText={setInputText}
-            multiline
-            maxLength={1000}
-            onSubmitEditing={() => sendMessage()}
-            returnKeyType="send"
-          />
-          <TouchableOpacity
-            style={[
-              styles.sendButton,
-              (!inputText.trim() || loading) && styles.sendButtonDisabled,
-            ]}
-            onPress={() => sendMessage()}
-            disabled={!inputText.trim() || loading}
-          >
-            {loading ? (
-              <ActivityIndicator size="small" color="#fff" />
-            ) : (
-              <Ionicons name="send" size={20} color="#fff" />
-            )}
-          </TouchableOpacity>
-        </View>
-      </View>
+      {renderContextPicker()}
+      {renderContent()}
     </KeyboardAvoidingView>
   );
 }
@@ -497,14 +2559,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
 
-  // Hero Gradient (MainHomeScreen style)
+  // Hero Gradient
   heroGradient: {
-    paddingBottom: 20,
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  chatHeroGradient: {
-    paddingBottom: 12,
+    paddingBottom: 24,
     position: 'relative',
     overflow: 'hidden',
   },
@@ -529,111 +2586,706 @@ const styles = StyleSheet.create({
   },
   heroContent: {
     alignItems: 'center',
-    paddingVertical: 16,
+    paddingVertical: 20,
     paddingHorizontal: 20,
   },
   heroTitle: {
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: 'bold',
     color: '#fff',
-    marginTop: 8,
-    marginBottom: 4,
+    marginTop: 12,
+    marginBottom: 6,
   },
   heroSubtitle: {
-    fontSize: 14,
+    fontSize: 15,
     color: 'rgba(255, 255, 255, 0.9)',
     textAlign: 'center',
-    lineHeight: 20,
-  },
-  chatHeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    gap: 8,
   },
 
-  // Quick Actions
-  quickActionsSection: {
+  // Intent Tiles
+  intentSection: {
     paddingHorizontal: 20,
-    marginTop: 24,
+    marginTop: 8,
+  },
+  intentGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  intentTile: {
+    width: (SCREEN_WIDTH - 52) / 2,
+    borderRadius: 20,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  intentTileGradient: {
+    paddingVertical: 24,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  tileCheckmarkWatermark: {
+    position: 'absolute',
+    right: -25,
+    bottom: -45,
+  },
+  intentTileLabel: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#ffffff',
+    marginTop: 12,
+    textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.2)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  intentTileSubtext: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.85)',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+
+  // Spot Check Section
+  spotCheckSection: {
+    paddingHorizontal: 20,
+    marginTop: 28,
+    marginBottom: 20,
   },
   sectionTitle: {
     fontSize: 20,
     fontWeight: 'bold',
     color: '#1E5AA8',
+    marginBottom: 4,
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: '#64748b',
     marginBottom: 16,
   },
-  quickActionsGrid: {
+  spotCheckButtonFull: {
+    borderRadius: 16,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  spotCheckButtonGradient: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 18,
     gap: 12,
   },
-  quickActionCard: {
-    width: (SCREEN_WIDTH - 52) / 3,
+  spotCheckButtonText: {
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+
+  // Live Scan Screen
+  liveScanContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+  liveScanCamera: {
+    flex: 1,
+  },
+  liveScanTopOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    paddingHorizontal: 16,
+    paddingBottom: 40,
+  },
+  liveScanBackButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  liveScanBackText: {
+    color: '#ffffff',
+    fontSize: 17,
+    fontWeight: '500',
+  },
+  liveScanHeader: {
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  liveScanTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#ffffff',
+    textAlign: 'center',
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  liveScanSubtitle: {
+    fontSize: 15,
+    color: 'rgba(255, 255, 255, 0.9)',
+    marginTop: 4,
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  liveScanBottomOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    paddingTop: 40,
+  },
+  liveScanEnergyBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    gap: 6,
+    marginBottom: 20,
+  },
+  liveScanEnergyText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  liveScanCaptureButton: {
+    marginBottom: 8,
+  },
+  liveScanCaptureOuter: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 4,
+  },
+  liveScanCaptureInner: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  liveScanCaptureHint: {
+    color: 'rgba(255, 255, 255, 0.9)',
+    fontSize: 14,
+    fontWeight: '500',
+    marginBottom: 10,
+  },
+  liveScanCaptureButtonActive: {
+    transform: [{ scale: 1.1 }],
+  },
+  liveScanCaptureButtonDisabled: {
+    opacity: 0.7,
+  },
+  liveScanCaptureOuterActive: {
+    backgroundColor: 'rgba(239, 68, 68, 0.4)',
+    borderWidth: 3,
+    borderColor: '#EF4444',
+  },
+  liveScanCaptureOuterDisabled: {
+    backgroundColor: 'rgba(148, 163, 184, 0.3)',
+  },
+  frameCounter: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 16,
+  },
+  frameDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: '#10B981',
+    borderWidth: 2,
+    borderColor: '#ffffff',
+  },
+  liveScanActionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 20,
+  },
+  liveScanDoneButton: {
+    borderRadius: 28,
+    overflow: 'hidden',
+  },
+  liveScanDoneGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingVertical: 14,
+    borderRadius: 28,
+    gap: 8,
+  },
+  liveScanDoneText: {
+    color: '#ffffff',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  photoCountBadge: {
+    position: 'absolute',
+    top: 100,
+    right: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: 20,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  photoThumbnailStack: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  photoThumbnail: {
+    width: 32,
+    height: 32,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#ffffff',
+  },
+  photoCountText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  liveScanGuides: {
+    ...StyleSheet.absoluteFillObject,
+    margin: 40,
+  },
+  liveScanCorner: {
+    position: 'absolute',
+    width: 24,
+    height: 24,
+    borderColor: 'rgba(255, 255, 255, 0.6)',
+  },
+  liveScanCornerTL: {
+    top: 0,
+    left: 0,
+    borderTopWidth: 3,
+    borderLeftWidth: 3,
+    borderTopLeftRadius: 8,
+  },
+  liveScanCornerTR: {
+    top: 0,
+    right: 0,
+    borderTopWidth: 3,
+    borderRightWidth: 3,
+    borderTopRightRadius: 8,
+  },
+  liveScanCornerBL: {
+    bottom: 0,
+    left: 0,
+    borderBottomWidth: 3,
+    borderLeftWidth: 3,
+    borderBottomLeftRadius: 8,
+  },
+  liveScanCornerBR: {
+    bottom: 0,
+    right: 0,
+    borderBottomWidth: 3,
+    borderRightWidth: 3,
+    borderBottomRightRadius: 8,
+  },
+
+  // Capture Screen
+  captureContainer: {
+    flex: 1,
+  },
+  captureHero: {
+    paddingBottom: 40,
+    position: 'relative',
+  },
+  captureHeroContent: {
+    alignItems: 'center',
+    paddingTop: 40,
+    paddingHorizontal: 20,
+  },
+  captureTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginTop: 20,
+    textAlign: 'center',
+  },
+  captureSubtitle: {
+    fontSize: 16,
+    color: 'rgba(255, 255, 255, 0.9)',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  energyBadge: {
+    marginTop: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    fontSize: 14,
+    color: '#ffffff',
+    overflow: 'hidden',
+  },
+  captureScrollView: {
+    flex: 1,
+  },
+  captureScrollContent: {
+    paddingHorizontal: 20,
+    paddingTop: 24,
+    paddingBottom: 40,
+  },
+  captureOptionsRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
+  },
+  captureOption: {
+    flex: 1,
     backgroundColor: '#fff',
     borderRadius: 16,
-    padding: 16,
+    padding: 20,
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
+    shadowOpacity: 0.08,
     shadowRadius: 8,
-    elevation: 2,
+    elevation: 3,
   },
-  quickActionIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+  captureOptionIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 8,
+    marginBottom: 12,
   },
-  quickActionLabel: {
-    fontSize: 12,
+  captureOptionLabel: {
+    fontSize: 15,
     fontWeight: '600',
     color: '#1e293b',
-    textAlign: 'center',
+    marginBottom: 2,
   },
-
-  // Suggested Prompts
-  suggestedSection: {
-    marginTop: 24,
-    paddingLeft: 20,
-  },
-  suggestedScroll: {
-    paddingRight: 20,
-    gap: 10,
-  },
-  suggestedChip: {
-    backgroundColor: '#fff',
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    borderWidth: 1,
-    borderColor: '#e2e8f0',
-    maxWidth: 280,
-  },
-  suggestedText: {
-    fontSize: 14,
+  captureOptionHint: {
+    fontSize: 12,
     color: '#64748b',
-    lineHeight: 18,
   },
-
-  // Chat Header
-  chatHeaderIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#FF6B35',
+  uploadVideoButton: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    marginTop: 8,
+    gap: 8,
   },
-  chatHeaderEmoji: {
-    fontSize: 20,
+  uploadVideoText: {
+    fontSize: 14,
+    color: '#64748b',
+    fontWeight: '500',
+  },
+
+  // Analyzing Screen
+  analyzingContainer: {
+    flex: 1,
+  },
+  analyzingGradient: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  analyzingContent: {
+    alignItems: 'center',
+    padding: 20,
+  },
+  analyzingImageContainer: {
+    position: 'relative',
+    marginBottom: 30,
+  },
+  analyzingImage: {
+    width: 200,
+    height: 200,
+    borderRadius: 20,
+  },
+  imageCountBadge: {
+    position: 'absolute',
+    bottom: -10,
+    right: -10,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#ffffff',
+  },
+  imageCountText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  analyzingSpinner: {
+    marginBottom: 20,
+  },
+  analyzingText: {
+    fontSize: 22,
+    fontWeight: '600',
+    color: '#ffffff',
+    marginBottom: 8,
+  },
+  analyzingSubtext: {
+    fontSize: 16,
+    color: 'rgba(255, 255, 255, 0.9)',
+  },
+
+  // Chat/Result Header
+  chatHeroGradient: {
+    paddingBottom: 12,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  chatHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  chatBackButton: {
+    padding: 4,
+  },
+  chatHeaderCenter: {
+    flex: 1,
+    alignItems: 'center',
   },
   chatHeaderTitle: {
-    fontSize: 18,
+    fontSize: 17,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+  chatHeaderSubtitle: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.9)',
+    marginTop: 2,
+  },
+  spotCheckMiniButton: {
+    padding: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 20,
+  },
+
+  // Energy Picker Modal
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  energyPickerContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 24,
+    padding: 24,
+    width: '100%',
+    maxWidth: 340,
+  },
+  energyPickerTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1e293b',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  energyOptions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  energyOption: {
+    flex: 1,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  energyOptionGradient: {
+    alignItems: 'center',
+    paddingVertical: 24,
+    paddingHorizontal: 12,
+  },
+  energyOptionLabel: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#ffffff',
+    marginTop: 12,
+    textAlign: 'center',
+  },
+  energyOptionSubtext: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.85)',
+    marginTop: 4,
+  },
+  energyOptionSelected: {
+    borderWidth: 3,
+    borderColor: '#1E5AA8',
+  },
+  energyOptionGradientSelected: {
+    opacity: 1,
+  },
+
+  // Context Picker Modal
+  contextPickerOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  contextPickerContainer: {
+    backgroundColor: '#fff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '85%',
+  },
+  contextPickerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 8,
+  },
+  contextPickerClose: {
+    padding: 4,
+  },
+  contextPickerTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1e293b',
+  },
+  contextPickerScroll: {
+    paddingHorizontal: 20,
+  },
+  contextSectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#475569',
+    marginTop: 20,
+    marginBottom: 12,
+  },
+  mealTypeOptions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 8,
+  },
+  mealTypeOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 20,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    gap: 6,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  mealTypeOptionSelected: {
+    backgroundColor: '#ffffff',
+    borderWidth: 2,
+  },
+  mealTypeLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  servingsOptions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  servingOption: {
+    flex: 1,
+    backgroundColor: '#f1f5f9',
+    borderRadius: 12,
+    paddingVertical: 16,
+    paddingHorizontal: 8,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  servingOptionSelected: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#1E5AA8',
+  },
+  servingLabel: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#1e293b',
+  },
+  servingLabelSelected: {
+    color: '#1E5AA8',
+  },
+  servingSubtext: {
+    fontSize: 12,
+    color: '#64748b',
+    marginTop: 4,
+  },
+  servingSubtextSelected: {
+    color: '#1E5AA8',
+  },
+  householdSetupButton: {
+    marginTop: 24,
+    marginBottom: 12,
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderStyle: 'dashed',
+  },
+  householdSetupContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 16,
+    gap: 12,
+  },
+  householdSetupText: {
+    flex: 1,
+  },
+  householdSetupLabel: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#475569',
+  },
+  householdSetupHint: {
+    fontSize: 12,
+    color: '#94a3b8',
+    marginTop: 2,
+  },
+  contextContinueButton: {
+    marginHorizontal: 20,
+    marginTop: 16,
+    marginBottom: 32,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  contextContinueButtonDisabled: {
+    opacity: 0.5,
+  },
+  contextContinueGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 18,
+    gap: 8,
+  },
+  contextContinueText: {
+    fontSize: 17,
     fontWeight: '600',
     color: '#ffffff',
   },
@@ -658,9 +3310,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#FF6B35',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  avatarEmoji: {
-    fontSize: 18,
   },
   messageBubble: {
     maxWidth: '75%',
@@ -688,6 +3337,12 @@ const styles = StyleSheet.create({
   userMessageText: {
     color: '#fff',
   },
+  messageImage: {
+    width: 150,
+    height: 150,
+    borderRadius: 12,
+    marginBottom: 8,
+  },
 
   // Loading
   loadingContainer: {
@@ -711,41 +3366,13 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
 
-  // Chat Quick Actions
-  chatQuickActions: {
-    paddingVertical: 12,
-  },
-  chatQuickActionsScroll: {
-    paddingHorizontal: 16,
-    gap: 8,
-  },
-  chatQuickActionChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-    gap: 6,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 1,
-  },
-  chatQuickActionText: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-
   // Input Area
   inputContainer: {
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#e2e8f0',
     paddingHorizontal: 16,
-    paddingVertical: 12,
-    paddingBottom: Platform.OS === 'ios' ? 28 : 12,
+    paddingTop: 12,
   },
   inputWrapper: {
     flexDirection: 'row',
@@ -754,9 +3381,12 @@ const styles = StyleSheet.create({
     borderRadius: 24,
     borderWidth: 1,
     borderColor: '#e2e8f0',
-    paddingLeft: 16,
+    paddingLeft: 8,
     paddingRight: 6,
     paddingVertical: 6,
+  },
+  inputIconButton: {
+    padding: 8,
   },
   input: {
     flex: 1,
@@ -775,5 +3405,692 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     backgroundColor: '#94a3b8',
+  },
+
+  // Options screen styles
+  optionsContainer: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  optionsHeader: {
+    paddingBottom: 16,
+  },
+  optionsHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  optionsBackButton: {
+    padding: 8,
+  },
+  optionsHeaderCenter: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  optionsHeaderTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  optionsHeaderSubtitle: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.8)',
+    marginTop: 2,
+  },
+  optionsRescanButton: {
+    padding: 8,
+  },
+  moodFilterContainer: {
+    paddingHorizontal: 12,
+    gap: 8,
+    paddingBottom: 8,
+  },
+  moodFilterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    gap: 6,
+  },
+  moodFilterChipActive: {
+    backgroundColor: 'rgba(255,255,255,0.4)',
+  },
+  moodFilterText: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.8)',
+    fontWeight: '500',
+  },
+  moodFilterTextActive: {
+    color: '#ffffff',
+    fontWeight: '600',
+  },
+  optionsScrollView: {
+    flex: 1,
+  },
+  optionsScrollContent: {
+    padding: 16,
+    paddingBottom: 40,
+  },
+
+  // Recipe card styles
+  recipeCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+    position: 'relative',
+  },
+  recipeCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  recipeCardIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recipeCardMeta: {
+    flex: 1,
+    marginLeft: 12,
+  },
+  recipeCardBadges: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  recipeTimeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  recipeTimeText: {
+    fontSize: 13,
+    color: '#64748b',
+  },
+  recipeDifficultyBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  recipeDifficultyText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  difficultyEasy: {
+    backgroundColor: '#dcfce7',
+  },
+  difficultyMedium: {
+    backgroundColor: '#fef3c7',
+  },
+  difficultyModerate: {
+    backgroundColor: '#fee2e2',
+  },
+  recipeCardName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1e293b',
+    marginBottom: 4,
+  },
+  recipeCardTagline: {
+    fontSize: 14,
+    color: '#64748b',
+    marginBottom: 12,
+  },
+  ingredientPreview: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  ingredientChip: {
+    backgroundColor: '#f1f5f9',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  ingredientChipText: {
+    fontSize: 12,
+    color: '#475569',
+  },
+  ingredientChipMore: {
+    backgroundColor: '#e2e8f0',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  ingredientChipMoreText: {
+    fontSize: 12,
+    color: '#64748b',
+    fontWeight: '600',
+  },
+  recipeCardNumber: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recipeCardNumberText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#94a3b8',
+  },
+
+  // No options message
+  noOptionsMessage: {
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  noOptionsText: {
+    fontSize: 16,
+    color: '#94a3b8',
+    marginTop: 12,
+  },
+  noOptionsLink: {
+    fontSize: 14,
+    color: '#3b82f6',
+    marginTop: 8,
+    fontWeight: '500',
+  },
+
+  // Mood suggestions
+  moodSuggestionsSection: {
+    marginTop: 24,
+    paddingTop: 24,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+  },
+  moodSuggestionsTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#64748b',
+    marginBottom: 16,
+  },
+  moodSuggestionsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  moodSuggestionCard: {
+    width: '47%' as any,
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  // Refine section styles
+  refineSection: {
+    marginTop: 24,
+    paddingTop: 24,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+  },
+  refineSectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1e293b',
+    marginBottom: 12,
+  },
+  feedbackInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    paddingLeft: 16,
+    marginBottom: 12,
+  },
+  feedbackInput: {
+    flex: 1,
+    fontSize: 15,
+    color: '#1e293b',
+    paddingVertical: 14,
+  },
+  feedbackSubmitButton: {
+    backgroundColor: '#FF6B35',
+    width: 44,
+    height: 44,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 4,
+  },
+  feedbackSubmitButtonDisabled: {
+    backgroundColor: '#cbd5e1',
+  },
+  refineButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderRadius: 12,
+    padding: 14,
+    gap: 10,
+  },
+  refineButtonText: {
+    flex: 1,
+    fontSize: 15,
+    color: '#64748b',
+  },
+  // Refine Modal styles
+  refineModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  refineModalContainer: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    maxHeight: '80%',
+    paddingBottom: 34,
+  },
+  refineModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  refineModalClose: {
+    padding: 4,
+  },
+  refineModalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1e293b',
+  },
+  refineModalScroll: {
+    paddingHorizontal: 20,
+    paddingTop: 8,
+  },
+  refineOptionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748b',
+    marginTop: 16,
+    marginBottom: 10,
+  },
+  refineOptionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  refineChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 20,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    gap: 6,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  refineChipSelected: {
+    backgroundColor: '#FF6B35',
+    borderColor: '#FF6B35',
+  },
+  refineChipText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#64748b',
+  },
+  refineChipTextSelected: {
+    color: '#ffffff',
+  },
+  refineApplyButton: {
+    marginHorizontal: 20,
+    marginTop: 20,
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  refineApplyGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    gap: 8,
+  },
+  refineApplyText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  moodSuggestionIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  moodSuggestionText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#475569',
+    textAlign: 'center',
+  },
+
+  // Detail screen styles
+  detailContainer: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  detailHeader: {
+    paddingBottom: 24,
+  },
+  detailHeaderRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  detailBackButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 8,
+  },
+  detailBackText: {
+    fontSize: 16,
+    color: '#ffffff',
+    marginLeft: 4,
+  },
+  detailHeroContent: {
+    alignItems: 'center',
+    paddingHorizontal: 24,
+  },
+  detailIconLarge: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+  },
+  detailTitle: {
+    fontSize: 26,
+    fontWeight: '700',
+    color: '#ffffff',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  detailTagline: {
+    fontSize: 16,
+    color: 'rgba(255,255,255,0.9)',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  detailMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  detailMetaItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  detailMetaText: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.9)',
+  },
+  detailMetaDivider: {
+    width: 1,
+    height: 16,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    marginHorizontal: 12,
+  },
+  detailScrollView: {
+    flex: 1,
+  },
+  detailScrollContent: {
+    padding: 20,
+    paddingBottom: 40,
+  },
+  detailSection: {
+    marginBottom: 24,
+  },
+  detailSectionTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1e293b',
+    marginBottom: 12,
+  },
+  ingredientsList: {},
+  ingredientRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  ingredientBullet: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#10b981',
+    marginRight: 12,
+  },
+  ingredientText: {
+    fontSize: 16,
+    color: '#334155',
+    flex: 1,
+  },
+  stepRow: {
+    flexDirection: 'row',
+    marginBottom: 16,
+  },
+  stepNumber: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+    marginTop: 2,
+  },
+  stepNumberText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  stepText: {
+    fontSize: 16,
+    color: '#334155',
+    flex: 1,
+    lineHeight: 24,
+  },
+  tipsCard: {
+    backgroundColor: '#fffbeb',
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 8,
+  },
+  tipsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 8,
+  },
+  tipsTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#b45309',
+  },
+  tipsText: {
+    fontSize: 14,
+    color: '#92400e',
+    lineHeight: 20,
+  },
+  startCookingButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderRadius: 16,
+    marginTop: 24,
+    gap: 8,
+  },
+  startCookingText: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+
+  // Review screen styles
+  reviewContainer: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  reviewHeader: {
+    paddingBottom: 20,
+    paddingHorizontal: 16,
+  },
+  reviewBackButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  reviewBackText: {
+    fontSize: 16,
+    color: '#ffffff',
+    marginLeft: 4,
+  },
+  reviewTitle: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#ffffff',
+    marginTop: 16,
+  },
+  reviewSubtitle: {
+    fontSize: 16,
+    color: 'rgba(255,255,255,0.9)',
+    marginTop: 4,
+  },
+  reviewScrollView: {
+    flex: 1,
+  },
+  reviewScrollContent: {
+    padding: 16,
+    paddingBottom: 120,
+  },
+  reviewImageGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  reviewImageWrapper: {
+    width: '47%' as any,
+    aspectRatio: 1,
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: '#e2e8f0',
+    position: 'relative',
+  },
+  reviewImage: {
+    width: '100%',
+    height: '100%',
+  },
+  reviewImageNumber: {
+    position: 'absolute',
+    top: 8,
+    left: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reviewImageNumberText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  reviewImageDelete: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  reviewHelpSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#fffbeb',
+    padding: 16,
+    borderRadius: 12,
+    marginTop: 20,
+    gap: 12,
+  },
+  reviewHelpText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#92400e',
+    lineHeight: 20,
+  },
+  reviewActions: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    padding: 16,
+    paddingBottom: 32,
+    backgroundColor: '#ffffff',
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+    gap: 12,
+  },
+  reviewScanMoreButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderRadius: 16,
+    borderWidth: 2,
+    borderColor: '#e2e8f0',
+    gap: 8,
+  },
+  reviewScanMoreText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  reviewAnalyzeButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 16,
+    borderRadius: 16,
+    gap: 8,
+  },
+  reviewAnalyzeText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#ffffff',
   },
 });

@@ -19,6 +19,7 @@ import ArticleScreen from './screens/ArticleScreen';
 import LearnItScreen from './screens/LearnItScreen';
 import PlanItScreen from './screens/PlanItScreen';
 import DoItScreen from './screens/DoItScreen';
+import HouseholdSetupScreen from './screens/HouseholdSetupScreen';
 import StartupCinematicOverlay from './components/StartupCinematicOverlay';
 
 export type RootStackParamList = {
@@ -55,6 +56,7 @@ export type RootStackParamList = {
   LearnIt: undefined;
   PlanIt: undefined;
   DoIt: undefined;
+  HouseholdSetup: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -150,6 +152,15 @@ function AppNavigator() {
         name="DoIt"
         component={DoItScreen}
         options={{ title: 'Do It' }}
+      />
+      <Stack.Screen
+        name="HouseholdSetup"
+        component={HouseholdSetupScreen}
+        options={{
+          title: 'Household',
+          presentation: 'modal',
+          headerShown: false,
+        }}
       />
     </Stack.Navigator>
   );

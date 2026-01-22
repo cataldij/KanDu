@@ -207,6 +207,7 @@ export default function GuidedFixScreen({ navigation, route }: GuidedFixScreenPr
   // Plan Revision State - tracks plan changes and shows new plan modal
   const [planRevision, setPlanRevision] = useState(0); // 0 = original, 1+ = regenerated
   const [showNewPlanModal, setShowNewPlanModal] = useState(false);
+  const [showViewPlanModal, setShowViewPlanModal] = useState(false); // View current plan from do_task modal
   const [newPlanSteps, setNewPlanSteps] = useState<RepairStep[]>([]); // Steps to show in modal
   const [planStartStep, setPlanStartStep] = useState(0); // Which step the new plan starts from
 
@@ -2967,6 +2968,20 @@ Do NOT include steps for things the user has already completed.`;
               </View>
             )}
 
+            {/* View Plan button for do_task */}
+            {pauseReason === 'do_task' && (
+              <TouchableOpacity
+                style={styles.viewPlanButton}
+                onPress={() => setShowViewPlanModal(true)}
+              >
+                <Ionicons name="list" size={20} color="#3b82f6" />
+                <Text style={styles.viewPlanButtonText}>
+                  View {planRevision > 0 ? 'Updated ' : ''}Plan ({repairSteps.length} steps)
+                </Text>
+                <Ionicons name="chevron-forward" size={18} color="#3b82f6" />
+              </TouchableOpacity>
+            )}
+
             {pauseReason !== 'get_item' && pauseReason !== 'working_on_step' && pauseReason !== 'do_task' && (
               <Text style={styles.pauseModalCurrentStep}>
                 Current Step: {repairSteps[currentStepIndex]?.instruction}
@@ -3061,6 +3076,92 @@ Do NOT include steps for things the user has already completed.`;
             >
               <Ionicons name="checkmark-circle" size={24} color="#ffffff" />
               <Text style={styles.newPlanButtonText}>Got It - Let's Continue!</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* View Current Plan Modal - Shows all steps with progress */}
+      <Modal visible={showViewPlanModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.viewPlanModal}>
+            <View style={styles.viewPlanHeader}>
+              <View style={styles.viewPlanHeaderLeft}>
+                <Ionicons name="list" size={28} color={PLAN_COLORS[planRevision % PLAN_COLORS.length]} />
+                <Text style={styles.viewPlanTitle}>
+                  {planRevision > 0 ? 'Updated Plan' : 'Repair Plan'}
+                </Text>
+              </View>
+              {planRevision > 0 && (
+                <View style={[styles.viewPlanBadge, { backgroundColor: PLAN_COLORS[planRevision % PLAN_COLORS.length] }]}>
+                  <Text style={styles.viewPlanBadgeText}>v{planRevision + 1}</Text>
+                </View>
+              )}
+            </View>
+
+            <Text style={styles.viewPlanProgress}>
+              Step {currentStepIndex + 1} of {repairSteps.length} • {Math.round(((currentStepIndex) / repairSteps.length) * 100)}% complete
+            </Text>
+
+            <ScrollView style={styles.viewPlanStepsList} showsVerticalScrollIndicator={true}>
+              {repairSteps.map((step, index) => {
+                const isCompleted = index < currentStepIndex;
+                const isCurrent = index === currentStepIndex;
+                return (
+                  <View
+                    key={index}
+                    style={[
+                      styles.viewPlanStepItem,
+                      isCompleted && styles.viewPlanStepItemCompleted,
+                      isCurrent && styles.viewPlanStepItemCurrent,
+                    ]}
+                  >
+                    <View style={[
+                      styles.viewPlanStepNumber,
+                      isCompleted && styles.viewPlanStepNumberCompleted,
+                      isCurrent && { backgroundColor: PLAN_COLORS[planRevision % PLAN_COLORS.length] },
+                    ]}>
+                      {isCompleted ? (
+                        <Ionicons name="checkmark" size={14} color="#ffffff" />
+                      ) : (
+                        <Text style={styles.viewPlanStepNumberText}>{index + 1}</Text>
+                      )}
+                    </View>
+                    <View style={styles.viewPlanStepContent}>
+                      <Text style={[
+                        styles.viewPlanStepInstruction,
+                        isCompleted && styles.viewPlanStepInstructionCompleted,
+                      ]}>
+                        {step.instruction}
+                      </Text>
+                      {step.toolsNeeded && step.toolsNeeded.length > 0 && (
+                        <View style={styles.viewPlanStepTools}>
+                          <Ionicons name="construct-outline" size={12} color={isCompleted ? '#94a3b8' : '#64748b'} />
+                          <Text style={[
+                            styles.viewPlanStepToolsText,
+                            isCompleted && { color: '#94a3b8' },
+                          ]}>
+                            {step.toolsNeeded.join(', ')}
+                          </Text>
+                        </View>
+                      )}
+                      {isCurrent && (
+                        <View style={[styles.viewPlanCurrentBadge, { backgroundColor: PLAN_COLORS[planRevision % PLAN_COLORS.length] }]}>
+                          <Text style={styles.viewPlanCurrentBadgeText}>Current Step</Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+                );
+              })}
+            </ScrollView>
+
+            <TouchableOpacity
+              style={[styles.viewPlanCloseButton, { backgroundColor: PLAN_COLORS[planRevision % PLAN_COLORS.length] }]}
+              onPress={() => setShowViewPlanModal(false)}
+            >
+              <Ionicons name="close-circle" size={24} color="#ffffff" />
+              <Text style={styles.viewPlanCloseButtonText}>Close</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -4232,6 +4333,26 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 28,
   },
+  viewPlanButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#eff6ff',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    width: '100%',
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+    gap: 8,
+  },
+  viewPlanButtonText: {
+    fontSize: 15,
+    color: '#3b82f6',
+    fontWeight: '600',
+    flex: 1,
+  },
   pauseModalButtonPrimary: {
     flexDirection: 'row',
     backgroundColor: '#10b981',
@@ -4607,6 +4728,137 @@ const styles = StyleSheet.create({
   newPlanButtonText: {
     color: '#ffffff',
     fontSize: 17,
+    fontWeight: 'bold',
+  },
+  // View Plan Modal Styles
+  viewPlanModal: {
+    backgroundColor: '#ffffff',
+    borderRadius: 24,
+    padding: 24,
+    width: '95%',
+    maxWidth: 400,
+    maxHeight: '85%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  viewPlanHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  viewPlanHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  viewPlanTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1e293b',
+  },
+  viewPlanBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  viewPlanBadgeText: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  viewPlanProgress: {
+    fontSize: 14,
+    color: '#64748b',
+    marginBottom: 16,
+  },
+  viewPlanStepsList: {
+    maxHeight: 350,
+    marginBottom: 16,
+  },
+  viewPlanStepItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 12,
+    paddingHorizontal: 8,
+    borderRadius: 8,
+    marginBottom: 4,
+    gap: 12,
+  },
+  viewPlanStepItemCompleted: {
+    backgroundColor: '#f1f5f9',
+    opacity: 0.7,
+  },
+  viewPlanStepItemCurrent: {
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  viewPlanStepNumber: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#e2e8f0',
+  },
+  viewPlanStepNumberCompleted: {
+    backgroundColor: '#10b981',
+  },
+  viewPlanStepNumberText: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: 'bold',
+  },
+  viewPlanStepContent: {
+    flex: 1,
+  },
+  viewPlanStepInstruction: {
+    fontSize: 14,
+    color: '#1e293b',
+    lineHeight: 20,
+  },
+  viewPlanStepInstructionCompleted: {
+    color: '#94a3b8',
+    textDecorationLine: 'line-through',
+  },
+  viewPlanStepTools: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 4,
+  },
+  viewPlanStepToolsText: {
+    fontSize: 11,
+    color: '#64748b',
+  },
+  viewPlanCurrentBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    marginTop: 6,
+  },
+  viewPlanCurrentBadgeText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  viewPlanCloseButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 14,
+    gap: 8,
+  },
+  viewPlanCloseButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
     fontWeight: 'bold',
   },
   // Substitute Search Section styles

@@ -13,6 +13,7 @@ import { useAuth } from '../contexts/AuthContext';
 
 type RootStackParamList = {
   Auth: { mode?: 'login' | 'signup' };
+  Favorites: undefined;
 };
 
 interface ProfileMenuProps {
@@ -133,6 +134,19 @@ export default function ProfileMenu({
           <View style={styles.divider} />
 
           {/* Menu Items */}
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => {
+              onClose();
+              navigation.navigate('Favorites');
+            }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="heart-outline" size={24} color="#1E5AA8" />
+            <Text style={styles.menuItemText}>My Favorites</Text>
+            <Ionicons name="chevron-forward" size={20} color="#94a3b8" />
+          </TouchableOpacity>
+
           <TouchableOpacity
             style={styles.menuItem}
             onPress={handleHistoryPress}

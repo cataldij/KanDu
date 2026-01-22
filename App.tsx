@@ -20,6 +20,7 @@ import LearnItScreen from './screens/LearnItScreen';
 import PlanItScreen from './screens/PlanItScreen';
 import DoItScreen from './screens/DoItScreen';
 import HouseholdSetupScreen from './screens/HouseholdSetupScreen';
+import FavoritesScreen from './screens/FavoritesScreen';
 import StartupCinematicOverlay from './components/StartupCinematicOverlay';
 
 export type RootStackParamList = {
@@ -55,8 +56,23 @@ export type RootStackParamList = {
   };
   LearnIt: undefined;
   PlanIt: undefined;
-  DoIt: undefined;
+  DoIt: {
+    favoriteRecipe?: {
+      id: string;
+      name: string;
+      tagline: string;
+      time: string;
+      difficulty: string;
+      mood?: string;
+      ingredients: string[];
+      steps: string[];
+      tips?: string;
+      icon: string;
+      imageUrl?: string;
+    };
+  };
   HouseholdSetup: undefined;
+  Favorites: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -159,6 +175,14 @@ function AppNavigator() {
         options={{
           title: 'Household',
           presentation: 'modal',
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="Favorites"
+        component={FavoritesScreen}
+        options={{
+          title: 'My Favorites',
           headerShown: false,
         }}
       />

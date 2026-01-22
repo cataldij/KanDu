@@ -19,11 +19,13 @@ import {
   Modal,
   Alert,
   Image,
+  Animated,
+  Easing,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Path } from 'react-native-svg';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { RootStackParamList } from '../App';
@@ -35,11 +37,18 @@ import { Video as VideoCompressor } from 'react-native-compressor';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import HouseIcon from '../components/HouseIcon';
 import VideoCompressionModal from '../components/VideoCompressionModal';
+import AnimatedLogo from '../components/AnimatedLogo';
+import FavoriteButton from '../components/FavoriteButton';
+import { supabase } from '../services/supabase';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.EXPO_PUBLIC_GEMINI_API_KEY || '');
+
+// API Keys for image services
+const PEXELS_API_KEY = process.env.EXPO_PUBLIC_PEXELS_API_KEY || '';
+const UNSPLASH_ACCESS_KEY = process.env.EXPO_PUBLIC_UNSPLASH_ACCESS_KEY || '';
 
 interface Message {
   id: string;
@@ -61,6 +70,7 @@ interface RecipeOption {
   steps: string[];
   tips?: string;
   icon: string;
+  imageUrl?: string;
 }
 
 // Mood filters for cooking
@@ -174,6 +184,7 @@ type FlowState = 'welcome' | 'capture' | 'liveScan' | 'review' | 'analyzing' | '
 
 export default function DoItScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
+  const route = useRoute<RouteProp<RootStackParamList, 'DoIt'>>();
   const insets = useSafeAreaInsets();
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
@@ -208,6 +219,7 @@ export default function DoItScreen() {
   const [selectedRecipe, setSelectedRecipe] = useState<RecipeOption | null>(null);
   const [activeMoodFilter, setActiveMoodFilter] = useState('all');
   const [loading, setLoading] = useState(false);
+  const [loadingRecipeImage, setLoadingRecipeImage] = useState(false);
 
   // Refine options state
   const [showRefineModal, setShowRefineModal] = useState(false);
@@ -228,6 +240,21 @@ export default function DoItScreen() {
       headerShown: false,
     });
   }, [navigation]);
+
+  // Handle navigation from Favorites - show recipe detail directly
+  useEffect(() => {
+    const favoriteRecipe = route.params?.favoriteRecipe;
+    if (favoriteRecipe) {
+      // Set the cooking intent as active
+      const cookingIntent = INTENT_TILES.find(t => t.id === 'cooking');
+      if (cookingIntent) {
+        setActiveIntent(cookingIntent);
+      }
+      // Set the recipe and go directly to detail view
+      setSelectedRecipe(favoriteRecipe as RecipeOption);
+      setFlowState('detail');
+    }
+  }, [route.params?.favoriteRecipe]);
 
   // Get the AI prompt based on intent and energy
   const getAnalysisPrompt = (intent: string, energy: string, servings?: string | null, mealType?: string | null) => {
@@ -339,6 +366,14 @@ Format:
   // Analyze the captured image
   const analyzeImage = async (imageUri: string) => {
     if (!activeIntent || !selectedEnergy) return;
+
+    // Ensure the image is in scannedFrames for later regeneration
+    setScannedFrames(prev => {
+      if (!prev.includes(imageUri)) {
+        return [imageUri];
+      }
+      return prev;
+    });
 
     setFlowState('analyzing');
     setLoading(true);
@@ -903,10 +938,21 @@ Format:
 
   // Regenerate recipes with refinements or feedback
   const regenerateWithRefinements = async (feedback?: string) => {
-    if (!activeIntent || scannedFrames.length === 0) return;
+    console.log('[DoIt] Regenerating with scannedFrames:', scannedFrames.length, 'activeIntent:', activeIntent?.id);
+
+    if (!activeIntent) {
+      Alert.alert('Error', 'No active intent found. Please start over.');
+      return;
+    }
+
+    if (scannedFrames.length === 0) {
+      Alert.alert('Error', 'No images found. Please scan your ingredients again.');
+      return;
+    }
 
     setIsRegenerating(true);
     setShowRefineModal(false);
+    console.log('[DoIt] Starting regeneration with refinements...');
 
     try {
       // Build refinement context
@@ -1021,6 +1067,128 @@ RULES:
     } finally {
       setIsRegenerating(false);
     }
+  };
+
+  // Image fetching functions
+  const getCachedRecipeImage = async (recipeName: string): Promise<string | null> => {
+    try {
+      const { data, error } = await supabase
+        .from('recipe_images')
+        .select('image_url')
+        .eq('recipe_name', recipeName.toLowerCase().trim())
+        .single();
+
+      if (error || !data) return null;
+      return data.image_url;
+    } catch (error) {
+      console.error('[Image] Cache lookup error:', error);
+      return null;
+    }
+  };
+
+  const cacheRecipeImage = async (recipeName: string, imageUrl: string, source: string) => {
+    try {
+      await supabase.from('recipe_images').insert({
+        recipe_name: recipeName.toLowerCase().trim(),
+        image_url: imageUrl,
+        image_source: source,
+      });
+    } catch (error) {
+      console.error('[Image] Cache save error:', error);
+    }
+  };
+
+  const searchPexels = async (query: string): Promise<{ url: string; score: number } | null> => {
+    if (!PEXELS_API_KEY) return null;
+
+    try {
+      const response = await fetch(
+        `https://api.pexels.com/v1/search?query=${encodeURIComponent(query + ' food')}&per_page=1`,
+        {
+          headers: {
+            Authorization: PEXELS_API_KEY,
+          },
+        }
+      );
+
+      const data = await response.json();
+      if (data.photos && data.photos.length > 0) {
+        return {
+          url: data.photos[0].src.large,
+          score: 1, // Pexels doesn't provide relevance score, default to 1
+        };
+      }
+      return null;
+    } catch (error) {
+      console.error('[Image] Pexels search error:', error);
+      return null;
+    }
+  };
+
+  const searchUnsplash = async (query: string): Promise<{ url: string; score: number } | null> => {
+    if (!UNSPLASH_ACCESS_KEY) return null;
+
+    try {
+      const response = await fetch(
+        `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query + ' food')}&per_page=1`,
+        {
+          headers: {
+            Authorization: `Client-ID ${UNSPLASH_ACCESS_KEY}`,
+          },
+        }
+      );
+
+      const data = await response.json();
+      if (data.results && data.results.length > 0) {
+        return {
+          url: data.results[0].urls.regular,
+          score: 1, // Unsplash doesn't provide relevance score, default to 1
+        };
+      }
+      return null;
+    } catch (error) {
+      console.error('[Image] Unsplash search error:', error);
+      return null;
+    }
+  };
+
+  const fetchRecipeImage = async (recipeName: string): Promise<string | null> => {
+    // Check cache first
+    const cached = await getCachedRecipeImage(recipeName);
+    if (cached) {
+      console.log('[Image] Using cached image for:', recipeName);
+      return cached;
+    }
+
+    console.log('[Image] Fetching new image for:', recipeName);
+
+    // Search both APIs in parallel
+    const [pexelsResult, unsplashResult] = await Promise.all([
+      searchPexels(recipeName),
+      searchUnsplash(recipeName),
+    ]);
+
+    // Pick the best result (for now, prefer Pexels if both exist, otherwise take what we got)
+    let bestImage: { url: string; source: string } | null = null;
+
+    if (pexelsResult && unsplashResult) {
+      // Both found - prefer Pexels (you can add more logic here)
+      bestImage = { url: pexelsResult.url, source: 'pexels' };
+    } else if (pexelsResult) {
+      bestImage = { url: pexelsResult.url, source: 'pexels' };
+    } else if (unsplashResult) {
+      bestImage = { url: unsplashResult.url, source: 'unsplash' };
+    }
+
+    if (bestImage) {
+      // Cache it for next time
+      await cacheRecipeImage(recipeName, bestImage.url, bestImage.source);
+      console.log('[Image] Cached new image from', bestImage.source);
+      return bestImage.url;
+    }
+
+    console.log('[Image] No image found for:', recipeName);
+    return null;
   };
 
   // Handle press start - track time and prepare for potential hold
@@ -1814,7 +1982,91 @@ Previous recommendation was about: ${recommendation?.substring(0, 100) || 'a tas
     );
   };
 
-  // Analyzing screen
+  // Analyzing screen animations
+  const glowPulse = useRef(new Animated.Value(0.3)).current;
+  const dot1Opacity = useRef(new Animated.Value(0.3)).current;
+  const dot2Opacity = useRef(new Animated.Value(0.3)).current;
+  const dot3Opacity = useRef(new Animated.Value(0.3)).current;
+
+  // Glow pulse animation
+  useEffect(() => {
+    if (flowState !== 'analyzing') return;
+
+    const pulseAnimation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(glowPulse, {
+          toValue: 0.7,
+          duration: 1500,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+        Animated.timing(glowPulse, {
+          toValue: 0.3,
+          duration: 1500,
+          easing: Easing.inOut(Easing.ease),
+          useNativeDriver: true,
+        }),
+      ])
+    );
+    pulseAnimation.start();
+
+    return () => pulseAnimation.stop();
+  }, [flowState]);
+
+  // Animated dots - staggered wave effect
+  useEffect(() => {
+    if (flowState !== 'analyzing') return;
+
+    const animateDots = () => {
+      dot1Opacity.setValue(0.3);
+      dot2Opacity.setValue(0.3);
+      dot3Opacity.setValue(0.3);
+
+      Animated.stagger(200, [
+        Animated.sequence([
+          Animated.timing(dot1Opacity, {
+            toValue: 1,
+            duration: 400,
+            useNativeDriver: true,
+          }),
+          Animated.timing(dot1Opacity, {
+            toValue: 0.3,
+            duration: 400,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(dot2Opacity, {
+            toValue: 1,
+            duration: 400,
+            useNativeDriver: true,
+          }),
+          Animated.timing(dot2Opacity, {
+            toValue: 0.3,
+            duration: 400,
+            useNativeDriver: true,
+          }),
+        ]),
+        Animated.sequence([
+          Animated.timing(dot3Opacity, {
+            toValue: 1,
+            duration: 400,
+            useNativeDriver: true,
+          }),
+          Animated.timing(dot3Opacity, {
+            toValue: 0.3,
+            duration: 400,
+            useNativeDriver: true,
+          }),
+        ]),
+      ]).start(() => {
+        setTimeout(animateDots, 200);
+      });
+    };
+
+    animateDots();
+  }, [flowState]);
+
   const renderAnalyzing = () => {
     const imageCount = scannedFrames.length || (capturedImage ? 1 : 0);
 
@@ -1827,6 +2079,24 @@ Previous recommendation was about: ${recommendation?.substring(0, 100) || 'a tas
           style={[styles.analyzingGradient, { paddingTop: insets.top }]}
         >
           <View style={styles.analyzingContent}>
+            {/* AnimatedLogo at top with glow effect */}
+            <View style={styles.analyzingLogoWrapper}>
+              {/* Glow circle behind logo */}
+              <Animated.View
+                style={[
+                  styles.analyzingGlowCircle,
+                  { opacity: glowPulse }
+                ]}
+              >
+                <LinearGradient
+                  colors={['transparent', 'rgba(255, 255, 255, 0.25)', 'rgba(255, 255, 255, 0.15)', 'transparent']}
+                  style={styles.analyzingGlowGradient}
+                />
+              </Animated.View>
+              <AnimatedLogo size={140} isLoading={true} traceDuration={5000} />
+            </View>
+
+            {/* Scanned image below the logo */}
             {capturedImage && (
               <View style={styles.analyzingImageContainer}>
                 <Image source={{ uri: capturedImage }} style={styles.analyzingImage} />
@@ -1837,11 +2107,19 @@ Previous recommendation was about: ${recommendation?.substring(0, 100) || 'a tas
                 )}
               </View>
             )}
-            <ActivityIndicator size="large" color="#ffffff" style={styles.analyzingSpinner} />
+
+            {/* Text */}
             <Text style={styles.analyzingText}>
               {imageCount > 1 ? `Analyzing ${imageCount} images...` : 'Looking at what you have...'}
             </Text>
-            <Text style={styles.analyzingSubtext}>Finding the best option</Text>
+            <Text style={styles.analyzingSubtext}>Finding the best recipes for you</Text>
+
+            {/* Animated dots at bottom */}
+            <View style={styles.analyzingDotsContainer}>
+              <Animated.View style={[styles.analyzingDot, { opacity: dot1Opacity, backgroundColor: '#ffffff' }]} />
+              <Animated.View style={[styles.analyzingDot, { opacity: dot2Opacity, backgroundColor: '#ffffff' }]} />
+              <Animated.View style={[styles.analyzingDot, { opacity: dot3Opacity, backgroundColor: '#ffffff' }]} />
+            </View>
           </View>
         </LinearGradient>
       </View>
@@ -2186,9 +2464,38 @@ Previous recommendation was about: ${recommendation?.substring(0, 100) || 'a tas
             </View>
           </View>
         </Modal>
+
+        {/* Regenerating Overlay */}
+        {isRegenerating && (
+          <View style={styles.regeneratingOverlay}>
+            <View style={styles.regeneratingCard}>
+              <ActivityIndicator size="large" color="#FF6B35" />
+              <Text style={styles.regeneratingText}>Getting new suggestions...</Text>
+            </View>
+          </View>
+        )}
       </View>
     );
   };
+
+  // Fetch recipe image when recipe is selected
+  useEffect(() => {
+    if (selectedRecipe && !selectedRecipe.imageUrl) {
+      setLoadingRecipeImage(true);
+      fetchRecipeImage(selectedRecipe.name)
+        .then(imageUrl => {
+          if (imageUrl) {
+            setSelectedRecipe(prev => prev ? { ...prev, imageUrl } : null);
+          }
+        })
+        .catch(error => {
+          console.error('[Image] Failed to fetch recipe image:', error);
+        })
+        .finally(() => {
+          setLoadingRecipeImage(false);
+        });
+    }
+  }, [selectedRecipe?.id]);
 
   // Detail screen - full recipe view
   const renderDetail = () => {
@@ -2196,12 +2503,34 @@ Previous recommendation was about: ${recommendation?.substring(0, 100) || 'a tas
 
     return (
       <View style={styles.detailContainer}>
-        {/* Header */}
+        {/* Recipe Image Background */}
+        {selectedRecipe.imageUrl && (
+          <Image
+            source={{ uri: selectedRecipe.imageUrl }}
+            style={styles.recipeImageBackground}
+            resizeMode="cover"
+          />
+        )}
+
+        {/* Header Gradient - fades from color to transparent over image */}
         <LinearGradient
-          colors={activeIntent?.gradient || ['#FF6B35', '#FFA500']}
+          colors={
+            selectedRecipe.imageUrl
+              ? [
+                  ...(activeIntent?.gradient || ['#FF6B35', '#FFA500']),
+                  'rgba(255, 107, 53, 0.7)',
+                  'rgba(255, 107, 53, 0.3)',
+                  'transparent',
+                ]
+              : activeIntent?.gradient || ['#FF6B35', '#FFA500']
+          }
           start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={[styles.detailHeader, { paddingTop: insets.top }]}
+          end={{ x: 0, y: 1 }}
+          style={[
+            styles.detailHeader,
+            { paddingTop: insets.top },
+            selectedRecipe.imageUrl && styles.detailHeaderWithImage,
+          ]}
         >
           <View style={styles.detailHeaderRow}>
             <TouchableOpacity
@@ -2212,12 +2541,36 @@ Previous recommendation was about: ${recommendation?.substring(0, 100) || 'a tas
               <Ionicons name="chevron-back" size={24} color="#ffffff" />
               <Text style={styles.detailBackText}>Options</Text>
             </TouchableOpacity>
+            <FavoriteButton
+              category="recipes"
+              itemId={selectedRecipe.id}
+              itemName={selectedRecipe.name}
+              itemData={{
+                id: selectedRecipe.id,
+                name: selectedRecipe.name,
+                tagline: selectedRecipe.tagline,
+                time: selectedRecipe.time,
+                difficulty: selectedRecipe.difficulty,
+                mood: selectedRecipe.mood,
+                ingredients: selectedRecipe.ingredients,
+                steps: selectedRecipe.steps,
+                tips: selectedRecipe.tips,
+                icon: selectedRecipe.icon,
+                imageUrl: selectedRecipe.imageUrl,
+              }}
+              size={26}
+              activeColor="#ffffff"
+              inactiveColor="rgba(255,255,255,0.6)"
+              style={styles.detailFavoriteButton}
+            />
           </View>
 
           <View style={styles.detailHeroContent}>
-            <View style={styles.detailIconLarge}>
-              <Ionicons name={selectedRecipe.icon as any} size={40} color="#ffffff" />
-            </View>
+            {!selectedRecipe.imageUrl && (
+              <View style={styles.detailIconLarge}>
+                <Ionicons name={selectedRecipe.icon as any} size={40} color="#ffffff" />
+              </View>
+            )}
             <Text style={styles.detailTitle}>{selectedRecipe.name}</Text>
             <Text style={styles.detailTagline}>{selectedRecipe.tagline}</Text>
 
@@ -2247,7 +2600,10 @@ Previous recommendation was about: ${recommendation?.substring(0, 100) || 'a tas
         {/* Content */}
         <ScrollView
           style={styles.detailScrollView}
-          contentContainerStyle={styles.detailScrollContent}
+          contentContainerStyle={[
+            styles.detailScrollContent,
+            selectedRecipe.imageUrl && { paddingTop: 120 }
+          ]}
           showsVerticalScrollIndicator={false}
         >
           {/* Ingredients */}
@@ -3010,6 +3366,78 @@ const styles = StyleSheet.create({
   analyzingContent: {
     alignItems: 'center',
     padding: 20,
+    flex: 1,
+    justifyContent: 'center',
+  },
+  analyzingLogoWrapper: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 30,
+    position: 'relative',
+  },
+  analyzingGlowCircle: {
+    position: 'absolute',
+    width: 220,
+    height: 220,
+    borderRadius: 110,
+    overflow: 'hidden',
+  },
+  analyzingGlowGradient: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 110,
+  },
+  analyzingDotsContainer: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 30,
+  },
+  analyzingDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+  },
+  analyzingLogoContainer: {
+    width: 180,
+    height: 180,
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+    marginBottom: 40,
+  },
+  analyzingLogo: {
+    width: 180,
+    height: 180,
+  },
+  checkmarkContainer: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    marginTop: -40,
+    marginLeft: -40,
+  },
+  analyzingTextNew: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#ffffff',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  loadingDotsContainer: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  loadingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#64748b',
+  },
+  analyzingSubtextNew: {
+    fontSize: 16,
+    color: '#94a3b8',
+    textAlign: 'center',
   },
   analyzingImageContainer: {
     position: 'relative',
@@ -3778,6 +4206,30 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: '#ffffff',
   },
+  regeneratingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+  },
+  regeneratingCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 16,
+    padding: 24,
+    alignItems: 'center',
+    gap: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  regeneratingText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1e293b',
+  },
   moodSuggestionIcon: {
     width: 44,
     height: 44,
@@ -3798,16 +4250,35 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f8fafc',
   },
+  recipeImageBackground: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 400,
+    width: '100%',
+  },
   detailHeader: {
     paddingBottom: 24,
   },
+  detailHeaderWithImage: {
+    paddingBottom: 120,
+  },
   detailHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingVertical: 8,
   },
   detailBackButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 8,
+  },
+  detailFavoriteButton: {
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: 20,
     padding: 8,
   },
   detailBackText: {

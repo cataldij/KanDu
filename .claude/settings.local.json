@@ -59,7 +59,8 @@
       "Bash(eas env:list:*)",
       "Bash(eas env:create:*)",
       "Bash(npx eas build:view:*)",
-      "Bash(npx eas:*)"
+      "Bash(npx eas:*)",
+      "Bash(npm search:*)"
     ],
     "additionalDirectories": [
       "c:\\Users\\socce\\OneDrive\\Documents\\kandu-fresh\\screens"

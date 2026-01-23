@@ -39,6 +39,9 @@ import HouseIcon from '../components/HouseIcon';
 import VideoCompressionModal from '../components/VideoCompressionModal';
 import AnimatedLogo from '../components/AnimatedLogo';
 import FavoriteButton from '../components/FavoriteButton';
+import AnimatedAnnotation, { Annotation, AnnotationType, AnnotationColor } from '../components/AnimatedAnnotation';
+import SpotCheckScanner from '../components/SpotCheckScanner';
+import CookingSession from '../components/CookingSession';
 import { supabase } from '../services/supabase';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -95,7 +98,7 @@ const INTENT_TILES = [
   {
     id: 'cooking',
     icon: 'restaurant',
-    label: "What's for dinner?",
+    label: "Make a meal",
     subtext: 'Scan fridge, get ideas',
     gradient: ['#FF6B35', '#FFA500'] as [string, string],
     cameraPrompt: 'Show me what you have',
@@ -180,7 +183,7 @@ const DIETARY_OPTIONS = [
   { id: 'high-protein', label: 'High Protein', icon: 'fitness' },
 ];
 
-type FlowState = 'welcome' | 'capture' | 'liveScan' | 'review' | 'analyzing' | 'options' | 'detail';
+type FlowState = 'welcome' | 'capture' | 'liveScan' | 'review' | 'analyzing' | 'options' | 'detail' | 'spotcheck' | 'spotcheck_result';
 
 export default function DoItScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
@@ -234,6 +237,13 @@ export default function DoItScreen() {
   const [inputText, setInputText] = useState('');
   const [recommendation, setRecommendation] = useState<string | null>(null);
   const scrollViewRef = useRef<ScrollView>(null);
+
+  // Spot Check annotations state
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [spotCheckResponse, setSpotCheckResponse] = useState<string | null>(null);
+  const [spotCheckQuestion, setSpotCheckQuestion] = useState<string>('');
+  const [showSpotCheckScanner, setShowSpotCheckScanner] = useState(false);
+  const [showCookingSession, setShowCookingSession] = useState(false);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -459,6 +469,141 @@ Format:
       setFlowState('capture');
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Spot Check analysis - analyzes image and returns visual annotations
+  const analyzeSpotCheck = async (imageUri: string, question: string) => {
+    setFlowState('analyzing');
+    setLoading(true);
+    setSpotCheckQuestion(question);
+    setAnnotations([]);
+
+    try {
+      const base64 = await FileSystem.readAsStringAsync(imageUri, {
+        encoding: FileSystem.EncodingType.Base64,
+      });
+
+      const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+
+      // Prompt that asks AI to return annotations with coordinates
+      const prompt = `You are KanDu, an AI assistant helping someone with a cooking task. They are showing you an image and asking: "${question}"
+
+Analyze the image and provide:
+1. A brief spoken response (2-3 sentences, conversational tone)
+2. Visual annotations to highlight specific areas on the image
+
+Return your response as JSON in this exact format:
+{
+  "response": "Your conversational response here",
+  "annotations": [
+    {
+      "id": "1",
+      "type": "circle|checkmark|x|arrow|pointer|highlight",
+      "x": 50,
+      "y": 50,
+      "size": 1,
+      "color": "green|yellow|red|blue|white",
+      "label": "Optional text label"
+    }
+  ]
+}
+
+Annotation types:
+- "circle": Draw attention to an area (use yellow/red for issues, green for good)
+- "checkmark": Mark something as good/done (use green)
+- "x": Mark something as wrong/problem (use red)
+- "arrow": Point from one area to another (requires toX, toY)
+- "pointer": Pin/marker on exact spot
+- "highlight": Soft highlight/glow on area
+
+Coordinates are percentages (0-100) of image width/height, where (0,0) is top-left.
+
+Be specific and helpful. If checking food doneness, indicate which parts are done vs need more time.
+If multiple items, annotate each one.
+
+IMPORTANT: Return ONLY valid JSON, no markdown code blocks.`;
+
+      const result = await model.generateContent([
+        { text: prompt },
+        {
+          inlineData: {
+            mimeType: 'image/jpeg',
+            data: base64,
+          },
+        },
+      ]);
+
+      const responseText = result.response.text();
+      console.log('[SpotCheck] AI Response:', responseText);
+
+      try {
+        // Clean up response - remove markdown code blocks if present
+        let jsonStr = responseText;
+        if (jsonStr.includes('```json')) {
+          jsonStr = jsonStr.replace(/```json\n?/g, '').replace(/```\n?/g, '');
+        } else if (jsonStr.includes('```')) {
+          jsonStr = jsonStr.replace(/```\n?/g, '');
+        }
+        jsonStr = jsonStr.trim();
+
+        const parsed = JSON.parse(jsonStr);
+
+        if (parsed.response) {
+          setSpotCheckResponse(parsed.response);
+        }
+
+        if (parsed.annotations && Array.isArray(parsed.annotations)) {
+          // Add staggered delays for animation sequence
+          const annotationsWithDelays = parsed.annotations.map((ann: Annotation, idx: number) => ({
+            ...ann,
+            delay: idx * 300, // 300ms between each annotation
+          }));
+          setAnnotations(annotationsWithDelays);
+        }
+
+        setFlowState('spotcheck_result');
+
+      } catch (parseError) {
+        console.error('JSON parse error:', parseError);
+        // Fallback: just show the text response without annotations
+        setSpotCheckResponse(responseText);
+        setAnnotations([]);
+        setFlowState('spotcheck_result');
+      }
+
+    } catch (error) {
+      console.error('Spot check error:', error);
+      Alert.alert('Analysis Failed', 'Could not analyze the image. Please try again.');
+      setFlowState('capture');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Start a spot check from camera
+  const startSpotCheck = async () => {
+    try {
+      const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+      if (!permissionResult.granted) {
+        Alert.alert('Permission Required', 'Please allow camera access');
+        return;
+      }
+
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ['images'],
+        allowsEditing: false,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets?.[0]) {
+        setCapturedImage(result.assets[0].uri);
+        // For now, use a default question - later integrate voice input
+        await analyzeSpotCheck(result.assets[0].uri, 'Does this look done?');
+      }
+    } catch (error) {
+      console.error('Spot check camera error:', error);
+      Alert.alert('Error', 'Failed to open camera');
     }
   };
 
@@ -1384,12 +1529,11 @@ Previous recommendation was about: ${recommendation?.substring(0, 100) || 'a tas
     }
   };
 
-  // Quick Spot Check (from welcome screen)
+  // Quick Spot Check (from welcome screen) - opens live scanner
   const handleQuickSpotCheck = () => {
     setActiveIntent(INTENT_TILES[0]); // Default to cooking context
     setSelectedEnergy('quick');
-    setFlowState('capture');
-    setTimeout(() => setShowMediaOptions(true), 300);
+    setShowSpotCheckScanner(true);
   };
 
   // Reset to start
@@ -2497,6 +2641,106 @@ Previous recommendation was about: ${recommendation?.substring(0, 100) || 'a tas
     }
   }, [selectedRecipe?.id]);
 
+  // Spot Check Result screen - frozen frame with animated annotations
+  const renderSpotCheckResult = () => {
+    const imageSize = SCREEN_WIDTH - 40; // Full width minus padding
+
+    return (
+      <View style={styles.spotCheckResultContainer}>
+        {/* Header */}
+        <LinearGradient
+          colors={['#0f172a', '#1e3a5f']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={[styles.spotCheckResultHeader, { paddingTop: insets.top }]}
+        >
+          <View style={styles.spotCheckHeaderRow}>
+            <TouchableOpacity
+              onPress={resetFlow}
+              style={styles.spotCheckBackButton}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="close" size={24} color="#ffffff" />
+            </TouchableOpacity>
+            <Text style={styles.spotCheckHeaderTitle}>Spot Check</Text>
+            <TouchableOpacity
+              onPress={startSpotCheck}
+              style={styles.spotCheckRetryButton}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="camera" size={22} color="#ffffff" />
+            </TouchableOpacity>
+          </View>
+
+          {/* Question asked */}
+          <View style={styles.spotCheckQuestionBubble}>
+            <Ionicons name="chatbubble" size={16} color="rgba(255,255,255,0.6)" />
+            <Text style={styles.spotCheckQuestionText}>"{spotCheckQuestion}"</Text>
+          </View>
+        </LinearGradient>
+
+        {/* Main content - frozen frame with annotations */}
+        <ScrollView
+          style={styles.spotCheckScrollView}
+          contentContainerStyle={styles.spotCheckScrollContent}
+          showsVerticalScrollIndicator={false}
+        >
+          {/* Image container with annotations overlay */}
+          <View style={[styles.spotCheckImageWrapper, { width: imageSize, height: imageSize }]}>
+            {capturedImage && (
+              <>
+                <Image
+                  source={{ uri: capturedImage }}
+                  style={styles.spotCheckImage}
+                  resizeMode="cover"
+                />
+                {/* Animated annotations overlay */}
+                <AnimatedAnnotation
+                  annotations={annotations}
+                  imageWidth={imageSize}
+                  imageHeight={imageSize}
+                />
+              </>
+            )}
+          </View>
+
+          {/* AI Response */}
+          <View style={styles.spotCheckResponseCard}>
+            <View style={styles.spotCheckResponseHeader}>
+              <View style={styles.spotCheckAvatarIcon}>
+                <Ionicons name="checkmark-circle" size={24} color="#ffffff" />
+              </View>
+              <Text style={styles.spotCheckResponseLabel}>KanDu says</Text>
+            </View>
+            <Text style={styles.spotCheckResponseText}>
+              {spotCheckResponse || 'Analyzing...'}
+            </Text>
+          </View>
+
+          {/* Action buttons */}
+          <View style={styles.spotCheckActions}>
+            <TouchableOpacity
+              style={styles.spotCheckGotItButton}
+              onPress={resetFlow}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.spotCheckGotItText}>Got it</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.spotCheckAskMoreButton}
+              onPress={startSpotCheck}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="camera-outline" size={20} color="#3b82f6" />
+              <Text style={styles.spotCheckAskMoreText}>Check again</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </View>
+    );
+  };
+
   // Detail screen - full recipe view
   const renderDetail = () => {
     if (!selectedRecipe) return null;
@@ -2534,12 +2778,22 @@ Previous recommendation was about: ${recommendation?.substring(0, 100) || 'a tas
         >
           <View style={styles.detailHeaderRow}>
             <TouchableOpacity
-              onPress={() => setFlowState('options')}
+              onPress={() => {
+                // If came from Favorites, go back to the previous screen (Favorites)
+                if (route.params?.fromFavorites) {
+                  navigation.goBack();
+                } else {
+                  // Otherwise go back to options
+                  setFlowState('options');
+                }
+              }}
               style={styles.detailBackButton}
               activeOpacity={0.7}
             >
               <Ionicons name="chevron-back" size={24} color="#ffffff" />
-              <Text style={styles.detailBackText}>Options</Text>
+              <Text style={styles.detailBackText}>
+                {route.params?.fromFavorites ? 'Favorites' : 'Options'}
+              </Text>
             </TouchableOpacity>
             <FavoriteButton
               category="recipes"
@@ -2646,7 +2900,7 @@ Previous recommendation was about: ${recommendation?.substring(0, 100) || 'a tas
           {/* Start Cooking button */}
           <TouchableOpacity
             style={[styles.startCookingButton, { backgroundColor: activeIntent?.gradient[0] || '#FF6B35' }]}
-            onPress={() => Alert.alert('Coming Soon', 'Step-by-step cooking mode coming soon!')}
+            onPress={() => setShowCookingSession(true)}
             activeOpacity={0.9}
           >
             <Ionicons name="play" size={24} color="#ffffff" />
@@ -2878,6 +3132,8 @@ Previous recommendation was about: ${recommendation?.substring(0, 100) || 'a tas
         return renderOptions();
       case 'detail':
         return renderDetail();
+      case 'spotcheck_result':
+        return renderSpotCheckResult();
       default:
         return null;
     }
@@ -2890,6 +3146,49 @@ Previous recommendation was about: ${recommendation?.substring(0, 100) || 'a tas
     >
       {renderContextPicker()}
       {renderContent()}
+
+      {/* SpotCheck Scanner Modal - fullscreen live camera experience */}
+      <Modal
+        visible={showSpotCheckScanner}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => setShowSpotCheckScanner(false)}
+      >
+        <SpotCheckScanner
+          onClose={() => setShowSpotCheckScanner(false)}
+          context={activeIntent?.id}
+          onComplete={(result) => {
+            // Optionally handle result for step-by-step session
+            console.log('[DoIt] SpotCheck completed:', result.context);
+          }}
+        />
+      </Modal>
+
+      {/* Cooking Session Modal - step-by-step guided cooking */}
+      <Modal
+        visible={showCookingSession}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => setShowCookingSession(false)}
+      >
+        {selectedRecipe && (
+          <CookingSession
+            recipeName={selectedRecipe.name}
+            steps={selectedRecipe.steps}
+            ingredients={selectedRecipe.ingredients}
+            accentColor={activeIntent?.gradient[0] || '#FF6B35'}
+            onClose={() => setShowCookingSession(false)}
+            onComplete={() => {
+              setShowCookingSession(false);
+              Alert.alert(
+                'Nice work! 🎉',
+                `You've completed ${selectedRecipe.name}. Enjoy your meal!`,
+                [{ text: 'Thanks!' }]
+              );
+            }}
+          />
+        )}
+      </Modal>
     </KeyboardAvoidingView>
   );
 }
@@ -2979,8 +3278,9 @@ const styles = StyleSheet.create({
     elevation: 6,
   },
   intentTileGradient: {
-    paddingVertical: 24,
+    paddingVertical: 28,
     paddingHorizontal: 16,
+    minHeight: 180,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
@@ -3367,12 +3667,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     flex: 1,
-    justifyContent: 'center',
+    justifyContent: 'flex-start',
+    paddingTop: 10,
   },
   analyzingLogoWrapper: {
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 30,
+    marginBottom: 4,
     position: 'relative',
   },
   analyzingGlowCircle: {
@@ -3390,7 +3691,7 @@ const styles = StyleSheet.create({
   analyzingDotsContainer: {
     flexDirection: 'row',
     gap: 12,
-    marginTop: 30,
+    marginTop: 20,
   },
   analyzingDot: {
     width: 12,
@@ -3441,7 +3742,7 @@ const styles = StyleSheet.create({
   },
   analyzingImageContainer: {
     position: 'relative',
-    marginBottom: 30,
+    marginBottom: 20,
   },
   analyzingImage: {
     width: 200,
@@ -4563,5 +4864,148 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#ffffff',
+  },
+
+  // Spot Check Result styles
+  spotCheckResultContainer: {
+    flex: 1,
+    backgroundColor: '#D4E8ED',
+  },
+  spotCheckResultHeader: {
+    paddingBottom: 20,
+    paddingHorizontal: 20,
+  },
+  spotCheckHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  spotCheckBackButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  spotCheckHeaderTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  spotCheckRetryButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  spotCheckQuestionBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    alignSelf: 'center',
+  },
+  spotCheckQuestionText: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.9)',
+    fontStyle: 'italic',
+  },
+  spotCheckScrollView: {
+    flex: 1,
+  },
+  spotCheckScrollContent: {
+    padding: 20,
+    paddingBottom: 40,
+  },
+  spotCheckImageWrapper: {
+    borderRadius: 20,
+    overflow: 'hidden',
+    backgroundColor: '#1e293b',
+    alignSelf: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 12,
+  },
+  spotCheckImage: {
+    width: '100%',
+    height: '100%',
+  },
+  spotCheckResponseCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 20,
+    padding: 20,
+    marginTop: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  spotCheckResponseHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 12,
+  },
+  spotCheckAvatarIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#22c55e',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  spotCheckResponseLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  spotCheckResponseText: {
+    fontSize: 16,
+    lineHeight: 24,
+    color: '#1e293b',
+  },
+  spotCheckActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 20,
+  },
+  spotCheckGotItButton: {
+    flex: 1,
+    backgroundColor: '#22c55e',
+    paddingVertical: 16,
+    borderRadius: 16,
+    alignItems: 'center',
+  },
+  spotCheckGotItText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  spotCheckAskMoreButton: {
+    flex: 1,
+    backgroundColor: '#ffffff',
+    paddingVertical: 16,
+    borderRadius: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 2,
+    borderColor: '#e2e8f0',
+  },
+  spotCheckAskMoreText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3b82f6',
   },
 });

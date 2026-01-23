@@ -217,7 +217,7 @@ export default function FavoritesScreen() {
       case 'recipes':
         // Check if recipe data has required fields (ingredients, steps)
         if (item.item_data && item.item_data.ingredients && item.item_data.steps) {
-          navigation.navigate('DoIt', { favoriteRecipe: item.item_data });
+          navigation.navigate('DoIt', { favoriteRecipe: item.item_data, fromFavorites: true });
         } else {
           // Recipe was saved before full data storage was implemented
           Alert.alert(

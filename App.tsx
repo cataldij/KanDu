@@ -70,6 +70,7 @@ export type RootStackParamList = {
       icon: string;
       imageUrl?: string;
     };
+    fromFavorites?: boolean;
   };
   HouseholdSetup: undefined;
   Favorites: undefined;

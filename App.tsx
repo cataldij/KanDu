@@ -21,6 +21,12 @@ import PlanItScreen from './screens/PlanItScreen';
 import DoItScreen from './screens/DoItScreen';
 import HouseholdSetupScreen from './screens/HouseholdSetupScreen';
 import FavoritesScreen from './screens/FavoritesScreen';
+import GuestModeScreen from './screens/GuestModeScreen';
+import GuestModeSetupScreen from './screens/GuestModeSetupScreen';
+import GuestKitDetailScreen from './screens/GuestKitDetailScreen';
+import AddSafetyItemScreen from './screens/AddSafetyItemScreen';
+import GuestLinkViewScreen from './screens/GuestLinkViewScreen';
+import ShoppingListScreen from './screens/ShoppingListScreen';
 import StartupCinematicOverlay from './components/StartupCinematicOverlay';
 
 export type RootStackParamList = {
@@ -74,6 +80,12 @@ export type RootStackParamList = {
   };
   HouseholdSetup: undefined;
   Favorites: undefined;
+  GuestMode: undefined;
+  GuestModeSetup: { kitId?: string };
+  GuestKitDetail: { kitId: string };
+  AddSafetyItem: { kitId: string; itemId?: string };
+  GuestLinkView: { slug: string };
+  ShoppingList: { listId?: string };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -184,6 +196,56 @@ function AppNavigator() {
         component={FavoritesScreen}
         options={{
           title: 'My Favorites',
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="GuestMode"
+        component={GuestModeScreen}
+        options={{
+          title: 'Guest Mode',
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="GuestModeSetup"
+        component={GuestModeSetupScreen}
+        options={{
+          title: 'Create Guide',
+          headerShown: false,
+          presentation: 'modal',
+        }}
+      />
+      <Stack.Screen
+        name="GuestKitDetail"
+        component={GuestKitDetailScreen}
+        options={{
+          title: 'Guest Guide',
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="AddSafetyItem"
+        component={AddSafetyItemScreen}
+        options={{
+          title: 'Add Item',
+          headerShown: false,
+          presentation: 'modal',
+        }}
+      />
+      <Stack.Screen
+        name="GuestLinkView"
+        component={GuestLinkViewScreen}
+        options={{
+          title: 'Guest Guide',
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="ShoppingList"
+        component={ShoppingListScreen}
+        options={{
+          title: 'Shopping List',
           headerShown: false,
         }}
       />

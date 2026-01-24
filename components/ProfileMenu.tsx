@@ -14,6 +14,8 @@ import { useAuth } from '../contexts/AuthContext';
 type RootStackParamList = {
   Auth: { mode?: 'login' | 'signup' };
   Favorites: undefined;
+  GuestMode: undefined;
+  ShoppingList: { listId?: string };
 };
 
 interface ProfileMenuProps {
@@ -144,6 +146,32 @@ export default function ProfileMenu({
           >
             <Ionicons name="heart-outline" size={24} color="#1E5AA8" />
             <Text style={styles.menuItemText}>My Favorites</Text>
+            <Ionicons name="chevron-forward" size={20} color="#94a3b8" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => {
+              onClose();
+              navigation.navigate('ShoppingList', {});
+            }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="cart-outline" size={24} color="#1E5AA8" />
+            <Text style={styles.menuItemText}>Shopping Lists</Text>
+            <Ionicons name="chevron-forward" size={20} color="#94a3b8" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => {
+              onClose();
+              navigation.navigate('GuestMode');
+            }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="people-outline" size={24} color="#1E5AA8" />
+            <Text style={styles.menuItemText}>Guest Mode</Text>
             <Ionicons name="chevron-forward" size={20} color="#94a3b8" />
           </TouchableOpacity>
 

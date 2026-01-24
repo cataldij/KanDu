@@ -658,3 +658,810 @@ export async function getArticleImages(
 ): Promise<ApiResult<{ images: ArticleImage[] }>> {
   return callFunction<{ images: ArticleImage[] }>('article-images', { titles });
 }
+
+// ============================================
+// GUEST MODE API
+// ============================================
+
+export interface HomeBaseImage {
+  url: string;
+  angle: 'front' | 'right' | 'back' | 'left' | 'exit';
+  description?: string;
+}
+
+export interface GuestKit {
+  id: string;
+  user_id: string;
+  slug: string;
+  kit_type: 'home' | 'rental';
+  display_name: string;
+  expires_at?: string;
+  is_active: boolean;
+  access_pin?: string;
+  homeowner_name?: string;
+  homeowner_phone?: string;
+  show_phone_to_guest: boolean;
+  home_base_image_url?: string; // Legacy single image
+  home_base_images?: HomeBaseImage[]; // Multi-angle kitchen scan
+  home_base_scan_complete?: boolean;
+  home_base_description?: string;
+  wifi_network?: string;
+  wifi_password?: string;
+  address?: string;
+  show_address: boolean;
+  checkin_time?: string;
+  checkout_time?: string;
+  checkin_instructions?: string;
+  checkout_instructions?: string;
+  house_rules?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GuestKitItem {
+  id: string;
+  kit_id: string;
+  item_type: string;
+  custom_name?: string;
+  hint?: string;
+  overview_image_url?: string;
+  destination_image_url: string;
+  control_image_url?: string;
+  instructions?: string;
+  warning_text?: string;
+  route_description?: string;
+  priority: 'critical' | 'important' | 'helpful';
+  category: 'safety' | 'utilities' | 'appliances' | 'info';
+  display_order: number;
+  icon_name?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GuestKitItemType {
+  name: string;
+  icon: string;
+  priority: 'critical' | 'important' | 'helpful';
+  category: 'safety' | 'utilities' | 'appliances' | 'info';
+}
+
+export interface NavigationResponse {
+  location_identified: string;
+  confidence: number;
+  next_instruction: string;
+  highlight?: {
+    description: string;
+    region?: { x: number; y: number; width: number; height: number };
+  };
+  warning?: string;
+  arrived: boolean;
+  step_number: number;
+  total_steps: number;
+}
+
+/**
+ * Create a new guest kit
+ */
+export async function createGuestKit(
+  kit: Partial<GuestKit>
+): Promise<ApiResult<{ kit: GuestKit; itemTypes: Record<string, GuestKitItemType> }>> {
+  return callFunction('guest-kit', { action: 'create', kit });
+}
+
+/**
+ * Update a guest kit
+ */
+export async function updateGuestKit(
+  kitId: string,
+  updates: Partial<GuestKit>
+): Promise<ApiResult<{ kit: GuestKit }>> {
+  return callFunction('guest-kit', { action: 'update', kitId, updates });
+}
+
+/**
+ * Delete a guest kit
+ */
+export async function deleteGuestKit(
+  kitId: string
+): Promise<ApiResult<{ deleted: boolean }>> {
+  return callFunction('guest-kit', { action: 'delete', kitId });
+}
+
+/**
+ * Get a single guest kit with items
+ */
+export async function getGuestKit(
+  kitId: string
+): Promise<ApiResult<{ kit: GuestKit; items: GuestKitItem[]; itemTypes: Record<string, GuestKitItemType> }>> {
+  return callFunction('guest-kit', { action: 'get', kitId });
+}
+
+/**
+ * List all guest kits for the current user
+ */
+export async function listGuestKits(): Promise<ApiResult<{ kits: GuestKit[]; itemTypes: Record<string, GuestKitItemType> }>> {
+  return callFunction('guest-kit', { action: 'list' });
+}
+
+/**
+ * Add an item to a guest kit
+ */
+export async function addGuestKitItem(
+  item: Partial<GuestKitItem>
+): Promise<ApiResult<{ item: GuestKitItem }>> {
+  return callFunction('guest-kit', { action: 'add-item', item });
+}
+
+/**
+ * Update a guest kit item
+ */
+export async function updateGuestKitItem(
+  itemId: string,
+  updates: Partial<GuestKitItem>
+): Promise<ApiResult<{ item: GuestKitItem }>> {
+  return callFunction('guest-kit', { action: 'update-item', itemId, updates });
+}
+
+/**
+ * Delete a guest kit item
+ */
+export async function deleteGuestKitItem(
+  itemId: string
+): Promise<ApiResult<{ deleted: boolean }>> {
+  return callFunction('guest-kit', { action: 'delete-item', itemId });
+}
+
+/**
+ * Get item type definitions
+ */
+export async function getGuestKitItemTypes(): Promise<ApiResult<{ itemTypes: Record<string, GuestKitItemType> }>> {
+  return callFunction('guest-kit', { action: 'get-item-types' });
+}
+
+// ============================================
+// GUEST ACCESS API (Unauthenticated)
+// ============================================
+
+/**
+ * Call guest access function (no auth required)
+ */
+async function callGuestFunction<T>(
+  body: unknown
+): Promise<ApiResult<T>> {
+  try {
+    const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://fxqhpcmxektbinpizpmw.supabase.co';
+    const functionUrl = `${supabaseUrl}/functions/v1/guest-access`;
+
+    const response = await fetch(functionUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return { data: null, error: data.error || `HTTP ${response.status}` };
+    }
+
+    if (data && typeof data === 'object' && 'error' in data) {
+      return { data: null, error: data.error };
+    }
+
+    return { data, error: null };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Unknown error';
+    return { data: null, error: message };
+  }
+}
+
+/**
+ * Get a guest kit by slug (for guests, no auth required)
+ */
+export async function getGuestKitBySlug(
+  slug: string,
+  pin?: string
+): Promise<ApiResult<{
+  kit?: GuestKit;
+  items?: GuestKitItem[];
+  requiresPin: boolean;
+  kitName?: string;
+}>> {
+  return callGuestFunction({ action: 'get-kit', slug, pin });
+}
+
+/**
+ * Verify PIN for a guest kit
+ */
+export async function verifyGuestKitPin(
+  slug: string,
+  pin: string
+): Promise<ApiResult<{ verified: boolean }>> {
+  return callGuestFunction({ action: 'verify-pin', slug, pin });
+}
+
+/**
+ * Log item view for analytics
+ */
+export async function logGuestItemView(
+  kitId: string,
+  itemId: string
+): Promise<ApiResult<{ logged: boolean }>> {
+  return callGuestFunction({ action: 'log-view', kitId, itemId });
+}
+
+/**
+ * AI-powered scan navigation for guests
+ */
+export async function scanNavigate(
+  kitId: string,
+  itemId: string,
+  imageBase64: string,
+  currentStep?: number
+): Promise<ApiResult<{
+  navigation: NavigationResponse;
+  item: {
+    name: string;
+    instructions?: string;
+    warning?: string;
+    destination_image_url?: string;
+    control_image_url?: string;
+  };
+}>> {
+  return callGuestFunction({
+    action: 'scan-navigate',
+    kitId,
+    itemId,
+    imageBase64,
+    currentStep,
+  });
+}
+
+// ============================================
+// INVENTORY & SHOPPING LIST TYPES
+// ============================================
+
+export type ScanType = 'refrigerator' | 'pantry' | 'toolbox' | 'garage' | 'other';
+export type QuantityLevel = 'full' | 'good' | 'half' | 'low' | 'empty' | 'unknown';
+export type ItemPriority = 'critical' | 'normal' | 'optional';
+
+export interface InventoryItem {
+  name: string;
+  category: string;
+  quantityLevel: QuantityLevel;
+  quantityEstimate?: string;
+  needsRestock: boolean;
+  confidence: number;
+  location?: string;
+}
+
+export interface ShoppingItem {
+  itemName: string;
+  suggestedQuantity: string;
+  category: string;
+  priority: ItemPriority;
+  reason?: string;
+  storeSection?: string;
+}
+
+export interface InventoryScanResult {
+  success: boolean;
+  scanType: ScanType;
+  inventory: InventoryItem[];
+  shoppingList: ShoppingItem[];
+  summary: string;
+  totalItemsDetected: number;
+  itemsNeedingRestock: number;
+  suggestions?: string[];
+}
+
+export interface ShoppingList {
+  id: string;
+  user_id: string;
+  name: string;
+  list_type: 'grocery' | 'hardware' | 'mixed';
+  source_type?: string;
+  source_id?: string;
+  source_name?: string;
+  is_active: boolean;
+  is_archived: boolean;
+  created_at: string;
+  updated_at: string;
+  completed_at?: string;
+}
+
+export interface ShoppingListItem {
+  id: string;
+  list_id: string;
+  item_name: string;
+  quantity?: string;
+  unit?: string;
+  category?: string;
+  aisle_hint?: string;
+  is_checked: boolean;
+  checked_at?: string;
+  estimated_price?: number;
+  actual_price?: number;
+  store_suggestion?: string;
+  product_url?: string;
+  source_step_number?: number;
+  is_tool: boolean;
+  priority: ItemPriority;
+  notes?: string;
+  substitute_for?: string;
+  display_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// ============================================
+// INVENTORY SCAN FUNCTIONS
+// ============================================
+
+/**
+ * Scan fridge/pantry/toolbox image to identify items and quantity levels
+ */
+export async function scanInventory(
+  imageBase64: string,
+  scanType: ScanType = 'refrigerator',
+  context?: string
+): Promise<ApiResult<InventoryScanResult>> {
+  try {
+    const { data: sessionData } = await supabase.auth.getSession();
+    if (!sessionData?.session?.access_token) {
+      return { data: null, error: 'Not authenticated' };
+    }
+
+    // Access the URL from the supabase client
+    const supabaseUrl = (supabase as any).supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL;
+
+    const response = await fetch(
+      `${supabaseUrl}/functions/v1/inventory-scan`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${sessionData.session.access_token}`,
+        },
+        body: JSON.stringify({ imageBase64, scanType, context }),
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      return { data: null, error: errorData.error || `HTTP ${response.status}` };
+    }
+
+    const data = await response.json();
+    return { data, error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+// ============================================
+// SHOPPING LIST FUNCTIONS
+// ============================================
+
+/**
+ * Get all shopping lists for the current user
+ */
+export async function getShoppingLists(
+  includeArchived = false
+): Promise<ApiResult<ShoppingList[]>> {
+  try {
+    let query = supabase
+      .from('shopping_lists')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (!includeArchived) {
+      query = query.eq('is_archived', false);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data: data || [], error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Get a shopping list with its items
+ */
+export async function getShoppingListWithItems(
+  listId: string
+): Promise<ApiResult<{ list: ShoppingList; items: ShoppingListItem[] }>> {
+  try {
+    const [listResult, itemsResult] = await Promise.all([
+      supabase.from('shopping_lists').select('*').eq('id', listId).single(),
+      supabase
+        .from('shopping_list_items')
+        .select('*')
+        .eq('list_id', listId)
+        .order('is_checked', { ascending: true })
+        .order('priority', { ascending: true })
+        .order('display_order', { ascending: true }),
+    ]);
+
+    if (listResult.error) {
+      return { data: null, error: listResult.error.message };
+    }
+
+    return {
+      data: {
+        list: listResult.data,
+        items: itemsResult.data || [],
+      },
+      error: null,
+    };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Create a new shopping list
+ */
+export async function createShoppingList(
+  name: string,
+  listType: 'grocery' | 'hardware' | 'mixed',
+  sourceType?: string,
+  sourceName?: string
+): Promise<ApiResult<ShoppingList>> {
+  try {
+    const { data: userData } = await supabase.auth.getUser();
+    if (!userData?.user?.id) {
+      return { data: null, error: 'Not authenticated' };
+    }
+
+    const { data, error } = await supabase
+      .from('shopping_lists')
+      .insert({
+        user_id: userData.user.id,
+        name,
+        list_type: listType,
+        source_type: sourceType,
+        source_name: sourceName,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data, error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Add item to shopping list
+ */
+export async function addShoppingListItem(
+  listId: string,
+  item: Partial<ShoppingListItem>
+): Promise<ApiResult<ShoppingListItem>> {
+  try {
+    const { data, error } = await supabase
+      .from('shopping_list_items')
+      .insert({
+        list_id: listId,
+        item_name: item.item_name,
+        quantity: item.quantity,
+        unit: item.unit,
+        category: item.category,
+        aisle_hint: item.aisle_hint,
+        estimated_price: item.estimated_price,
+        store_suggestion: item.store_suggestion,
+        is_tool: item.is_tool || false,
+        priority: item.priority || 'normal',
+        notes: item.notes,
+        source_step_number: item.source_step_number,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data, error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Add multiple items to shopping list
+ */
+export async function addShoppingListItems(
+  listId: string,
+  items: Array<Partial<ShoppingListItem>>
+): Promise<ApiResult<ShoppingListItem[]>> {
+  try {
+    const insertData = items.map((item) => ({
+      list_id: listId,
+      item_name: item.item_name,
+      quantity: item.quantity,
+      unit: item.unit,
+      category: item.category,
+      aisle_hint: item.aisle_hint,
+      estimated_price: item.estimated_price,
+      store_suggestion: item.store_suggestion,
+      is_tool: item.is_tool || false,
+      priority: item.priority || 'normal',
+      notes: item.notes,
+      source_step_number: item.source_step_number,
+    }));
+
+    const { data, error } = await supabase
+      .from('shopping_list_items')
+      .insert(insertData)
+      .select();
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data: data || [], error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Toggle item checked status
+ */
+export async function toggleShoppingListItem(
+  itemId: string,
+  isChecked: boolean
+): Promise<ApiResult<ShoppingListItem>> {
+  try {
+    const { data, error } = await supabase
+      .from('shopping_list_items')
+      .update({
+        is_checked: isChecked,
+        checked_at: isChecked ? new Date().toISOString() : null,
+      })
+      .eq('id', itemId)
+      .select()
+      .single();
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data, error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Delete shopping list item
+ */
+export async function deleteShoppingListItem(
+  itemId: string
+): Promise<ApiResult<boolean>> {
+  try {
+    const { error } = await supabase
+      .from('shopping_list_items')
+      .delete()
+      .eq('id', itemId);
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data: true, error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Archive a shopping list
+ */
+export async function archiveShoppingList(
+  listId: string
+): Promise<ApiResult<boolean>> {
+  try {
+    const { error } = await supabase
+      .from('shopping_lists')
+      .update({ is_archived: true })
+      .eq('id', listId);
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data: true, error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Delete a shopping list and all its items
+ */
+export async function deleteShoppingList(
+  listId: string
+): Promise<ApiResult<boolean>> {
+  try {
+    const { error } = await supabase
+      .from('shopping_lists')
+      .delete()
+      .eq('id', listId);
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data: true, error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Create shopping list from repair plan steps (tools and materials)
+ */
+export async function createShoppingListFromRepairPlan(
+  repairSteps: RepairStep[],
+  category: string,
+  diagnosisSummary: string
+): Promise<ApiResult<{ list: ShoppingList; items: ShoppingListItem[] }>> {
+  try {
+    // Aggregate all tools and materials from all steps
+    const toolsMap = new Map<string, { name: string; stepNumbers: number[] }>();
+    const materialsMap = new Map<string, { name: string; stepNumbers: number[] }>();
+
+    repairSteps.forEach((step) => {
+      // Collect tools
+      step.toolsNeeded?.forEach((tool) => {
+        const normalizedName = tool.toLowerCase().trim();
+        const existing = toolsMap.get(normalizedName);
+        if (existing) {
+          existing.stepNumbers.push(step.stepNumber);
+        } else {
+          toolsMap.set(normalizedName, { name: tool, stepNumbers: [step.stepNumber] });
+        }
+      });
+
+      // Collect materials
+      step.materialsNeeded?.forEach((material) => {
+        const normalizedName = material.toLowerCase().trim();
+        const existing = materialsMap.get(normalizedName);
+        if (existing) {
+          existing.stepNumbers.push(step.stepNumber);
+        } else {
+          materialsMap.set(normalizedName, { name: material, stepNumbers: [step.stepNumber] });
+        }
+      });
+    });
+
+    // If no items, return early
+    if (toolsMap.size === 0 && materialsMap.size === 0) {
+      return { data: null, error: 'No tools or materials needed for this repair' };
+    }
+
+    // Create the list
+    const listResult = await createShoppingList(
+      `${category} Repair - ${diagnosisSummary.substring(0, 30)}...`,
+      'hardware',
+      'guided_fix',
+      diagnosisSummary
+    );
+
+    if (listResult.error || !listResult.data) {
+      return { data: null, error: listResult.error || 'Failed to create list' };
+    }
+
+    // Create items array
+    const items: Array<Partial<ShoppingListItem>> = [];
+
+    // Add tools
+    toolsMap.forEach(({ name, stepNumbers }) => {
+      items.push({
+        item_name: name,
+        category: 'tools',
+        is_tool: true,
+        priority: 'normal',
+        notes: `Needed for step${stepNumbers.length > 1 ? 's' : ''} ${stepNumbers.join(', ')}`,
+        store_suggestion: 'Home Depot / Lowes',
+      });
+    });
+
+    // Add materials
+    materialsMap.forEach(({ name, stepNumbers }) => {
+      items.push({
+        item_name: name,
+        category: 'hardware',
+        is_tool: false,
+        priority: 'normal',
+        notes: `Needed for step${stepNumbers.length > 1 ? 's' : ''} ${stepNumbers.join(', ')}`,
+        store_suggestion: 'Home Depot / Lowes',
+      });
+    });
+
+    const itemsResult = await addShoppingListItems(listResult.data.id, items);
+
+    if (itemsResult.error) {
+      return { data: null, error: itemsResult.error };
+    }
+
+    return {
+      data: {
+        list: listResult.data,
+        items: itemsResult.data || [],
+      },
+      error: null,
+    };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Create shopping list from inventory scan results
+ */
+export async function createShoppingListFromScan(
+  scanResult: InventoryScanResult,
+  listName?: string
+): Promise<ApiResult<{ list: ShoppingList; items: ShoppingListItem[] }>> {
+  try {
+    // Determine list type based on scan type
+    const listType = scanResult.scanType === 'toolbox' || scanResult.scanType === 'garage'
+      ? 'hardware'
+      : 'grocery';
+
+    // Create the list
+    const listResult = await createShoppingList(
+      listName || `${scanResult.scanType.charAt(0).toUpperCase() + scanResult.scanType.slice(1)} Shopping List`,
+      listType,
+      'fridge_scan',
+      scanResult.summary
+    );
+
+    if (listResult.error || !listResult.data) {
+      return { data: null, error: listResult.error || 'Failed to create list' };
+    }
+
+    // Add items from the scan
+    const items = scanResult.shoppingList.map((item) => ({
+      item_name: item.itemName,
+      quantity: item.suggestedQuantity,
+      category: item.category,
+      aisle_hint: item.storeSection,
+      priority: item.priority,
+      notes: item.reason,
+      is_tool: listType === 'hardware',
+    }));
+
+    const itemsResult = await addShoppingListItems(listResult.data.id, items);
+
+    if (itemsResult.error) {
+      return { data: null, error: itemsResult.error };
+    }
+
+    return {
+      data: {
+        list: listResult.data,
+        items: itemsResult.data || [],
+      },
+      error: null,
+    };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}

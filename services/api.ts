@@ -1089,6 +1089,9 @@ export interface ShoppingList {
   created_at: string;
   updated_at: string;
   completed_at?: string;
+  // Computed fields (calculated on fetch)
+  item_count?: number;
+  completed_count?: number;
 }
 
 export interface ShoppingListItem {
@@ -1145,15 +1148,19 @@ export async function scanInventory(
 // ============================================
 
 /**
- * Get all shopping lists for the current user
+ * Get all shopping lists for the current user with item counts
  */
 export async function getShoppingLists(
   includeArchived = false
 ): Promise<ApiResult<ShoppingList[]>> {
   try {
+    // Fetch lists with item counts using a subquery
     let query = supabase
       .from('shopping_lists')
-      .select('*')
+      .select(`
+        *,
+        shopping_list_items(id, is_checked)
+      `)
       .order('created_at', { ascending: false });
 
     if (!includeArchived) {
@@ -1166,7 +1173,18 @@ export async function getShoppingLists(
       return { data: null, error: error.message };
     }
 
-    return { data: data || [], error: null };
+    // Calculate item counts from the joined data
+    const listsWithCounts: ShoppingList[] = (data || []).map((list: any) => {
+      const items = list.shopping_list_items || [];
+      return {
+        ...list,
+        item_count: items.length,
+        completed_count: items.filter((item: any) => item.is_checked).length,
+        shopping_list_items: undefined, // Remove the raw items data
+      };
+    });
+
+    return { data: listsWithCounts, error: null };
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
   }
@@ -1585,6 +1603,323 @@ export async function createShoppingListFromScan(
       },
       error: null,
     };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+// ============================================
+// RECIPE TRACKING TYPES
+// ============================================
+
+export type RecipeCategory = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'dessert' | 'beverage' | 'other';
+
+export interface Recipe {
+  id: string;
+  user_id: string;
+  name: string;
+  description?: string;
+  category?: RecipeCategory;
+  cuisine?: string;
+  servings: number;
+  prep_time_minutes?: number;
+  cook_time_minutes?: number;
+  source_type?: 'manual' | 'receipt_scan' | 'imported' | 'ai_suggested';
+  source_url?: string;
+  image_url?: string;
+  times_cooked: number;
+  last_cooked_at?: string;
+  is_favorite: boolean;
+  auto_replenish_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  // Joined data
+  ingredients?: RecipeIngredient[];
+}
+
+export interface RecipeIngredient {
+  id: string;
+  recipe_id: string;
+  ingredient_name: string;
+  generic_name?: string;
+  brand_preference?: string;
+  quantity?: number;
+  unit?: string;
+  quantity_text?: string;
+  category?: string;
+  is_optional: boolean;
+  typical_package_size?: string;
+  estimated_cost?: number;
+  display_order: number;
+  created_at: string;
+}
+
+export interface CookingHistory {
+  id: string;
+  user_id: string;
+  recipe_id?: string;
+  recipe_name: string;
+  servings_made: number;
+  cooked_at: string;
+  generated_shopping_list_id?: string;
+  auto_replenished: boolean;
+  notes?: string;
+  rating?: number;
+  created_at: string;
+}
+
+// ============================================
+// RECIPE TRACKING FUNCTIONS
+// ============================================
+
+/**
+ * Get all recipes for the current user
+ */
+export async function getRecipes(
+  options?: { category?: RecipeCategory; favoritesOnly?: boolean }
+): Promise<ApiResult<Recipe[]>> {
+  try {
+    let query = supabase
+      .from('recipes')
+      .select(`
+        *,
+        ingredients:recipe_ingredients(*)
+      `)
+      .order('last_cooked_at', { ascending: false, nullsFirst: false });
+
+    if (options?.category) {
+      query = query.eq('category', options.category);
+    }
+
+    if (options?.favoritesOnly) {
+      query = query.eq('is_favorite', true);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data: data || [], error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Get a single recipe with ingredients
+ */
+export async function getRecipe(recipeId: string): Promise<ApiResult<Recipe>> {
+  try {
+    const { data, error } = await supabase
+      .from('recipes')
+      .select(`
+        *,
+        ingredients:recipe_ingredients(*)
+      `)
+      .eq('id', recipeId)
+      .single();
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data, error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Create a new recipe
+ */
+export async function createRecipe(
+  recipe: {
+    name: string;
+    description?: string;
+    category?: RecipeCategory;
+    cuisine?: string;
+    servings?: number;
+    prep_time_minutes?: number;
+    cook_time_minutes?: number;
+    image_url?: string;
+  },
+  ingredients: Array<{
+    ingredient_name: string;
+    quantity?: number;
+    unit?: string;
+    quantity_text?: string;
+    category?: string;
+    is_optional?: boolean;
+  }>
+): Promise<ApiResult<Recipe>> {
+  try {
+    // Create the recipe
+    const { data: recipeData, error: recipeError } = await supabase
+      .from('recipes')
+      .insert({
+        name: recipe.name,
+        description: recipe.description,
+        category: recipe.category || 'dinner',
+        cuisine: recipe.cuisine,
+        servings: recipe.servings || 4,
+        prep_time_minutes: recipe.prep_time_minutes,
+        cook_time_minutes: recipe.cook_time_minutes,
+        image_url: recipe.image_url,
+        source_type: 'manual',
+      })
+      .select()
+      .single();
+
+    if (recipeError || !recipeData) {
+      return { data: null, error: recipeError?.message || 'Failed to create recipe' };
+    }
+
+    // Add ingredients
+    if (ingredients.length > 0) {
+      const ingredientData = ingredients.map((ing, index) => ({
+        recipe_id: recipeData.id,
+        ingredient_name: ing.ingredient_name,
+        quantity: ing.quantity,
+        unit: ing.unit,
+        quantity_text: ing.quantity_text,
+        category: ing.category,
+        is_optional: ing.is_optional || false,
+        display_order: index + 1,
+      }));
+
+      const { error: ingredientError } = await supabase
+        .from('recipe_ingredients')
+        .insert(ingredientData);
+
+      if (ingredientError) {
+        console.warn('Failed to add ingredients:', ingredientError.message);
+      }
+    }
+
+    // Fetch the complete recipe with ingredients
+    return getRecipe(recipeData.id);
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Mark a recipe as cooked and optionally auto-replenish ingredients
+ */
+export async function cookRecipe(
+  recipeId: string,
+  options?: {
+    servings?: number;
+    notes?: string;
+    rating?: number;
+    autoReplenish?: boolean;
+  }
+): Promise<ApiResult<CookingHistory>> {
+  try {
+    // Use the database function for atomic operation
+    const { data, error } = await supabase.rpc('cook_recipe', {
+      p_recipe_id: recipeId,
+      p_servings: options?.servings,
+      p_notes: options?.notes,
+      p_rating: options?.rating,
+      p_auto_replenish: options?.autoReplenish ?? true,
+    });
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    // Fetch the cooking history entry
+    const { data: historyData, error: historyError } = await supabase
+      .from('cooking_history')
+      .select('*')
+      .eq('id', data)
+      .single();
+
+    if (historyError) {
+      return { data: null, error: historyError.message };
+    }
+
+    return { data: historyData, error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Get cooking history
+ */
+export async function getCookingHistory(
+  options?: { limit?: number; recipeId?: string }
+): Promise<ApiResult<CookingHistory[]>> {
+  try {
+    let query = supabase
+      .from('cooking_history')
+      .select('*')
+      .order('cooked_at', { ascending: false });
+
+    if (options?.recipeId) {
+      query = query.eq('recipe_id', options.recipeId);
+    }
+
+    if (options?.limit) {
+      query = query.limit(options.limit);
+    }
+
+    const { data, error } = await query;
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data: data || [], error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Toggle recipe favorite status
+ */
+export async function toggleRecipeFavorite(
+  recipeId: string,
+  isFavorite: boolean
+): Promise<ApiResult<Recipe>> {
+  try {
+    const { data, error } = await supabase
+      .from('recipes')
+      .update({ is_favorite: isFavorite })
+      .eq('id', recipeId)
+      .select()
+      .single();
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data, error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Delete a recipe
+ */
+export async function deleteRecipe(recipeId: string): Promise<ApiResult<boolean>> {
+  try {
+    const { error } = await supabase
+      .from('recipes')
+      .delete()
+      .eq('id', recipeId);
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data: true, error: null };
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
   }

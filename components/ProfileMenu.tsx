@@ -16,6 +16,7 @@ type RootStackParamList = {
   Favorites: undefined;
   GuestMode: undefined;
   ShoppingList: { listId?: string };
+  Recipes: undefined;
 };
 
 interface ProfileMenuProps {
@@ -159,6 +160,19 @@ export default function ProfileMenu({
           >
             <Ionicons name="cart-outline" size={24} color="#1E5AA8" />
             <Text style={styles.menuItemText}>Shopping Lists</Text>
+            <Ionicons name="chevron-forward" size={20} color="#94a3b8" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.menuItem}
+            onPress={() => {
+              onClose();
+              navigation.navigate('Recipes');
+            }}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="restaurant-outline" size={24} color="#1E5AA8" />
+            <Text style={styles.menuItemText}>Recipes</Text>
             <Ionicons name="chevron-forward" size={20} color="#94a3b8" />
           </TouchableOpacity>
 

@@ -59,7 +59,7 @@ try {
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 // Flow states for the screen
-type ScreenMode = 'lists' | 'scanType' | 'scanning' | 'analyzing' | 'results';
+type ScreenMode = 'listOverview' | 'listDetail' | 'scanType' | 'scanning' | 'analyzing' | 'results';
 
 // Priority colors
 const PRIORITY_COLORS: Record<ItemPriority, string> = {
@@ -141,7 +141,7 @@ export default function ShoppingListScreen() {
   const cameraRef = useRef<CameraView>(null);
 
   // Screen mode
-  const [mode, setMode] = useState<ScreenMode>('lists');
+  const [mode, setMode] = useState<ScreenMode>('listOverview');
   const [selectedScanType, setSelectedScanType] = useState<ScanType>('refrigerator');
 
   // Lists state
@@ -175,7 +175,7 @@ export default function ShoppingListScreen() {
   // Load lists on focus
   useFocusEffect(
     useCallback(() => {
-      if (mode === 'lists') {
+      if (mode === 'listOverview' || mode === 'listDetail') {
         loadLists();
       }
     }, [mode])
@@ -199,22 +199,25 @@ export default function ShoppingListScreen() {
     const result = await getShoppingLists();
     if (result.data) {
       setLists(result.data);
-      // Auto-select first list if none selected
-      if (result.data.length > 0 && !selectedList) {
-        loadListItems(result.data[0]);
-      }
     }
     setLoading(false);
   };
 
   const loadListItems = async (list: ShoppingList) => {
     setSelectedList(list);
+    setMode('listDetail');
     setLoadingItems(true);
     const result = await getShoppingListWithItems(list.id);
     if (result.data) {
       setItems(result.data.items);
     }
     setLoadingItems(false);
+  };
+
+  const goBackToListOverview = () => {
+    setSelectedList(null);
+    setItems([]);
+    setMode('listOverview');
   };
 
   const handleToggleItem = async (item: ShoppingListItem) => {
@@ -398,8 +401,7 @@ export default function ShoppingListScreen() {
           onPress: async () => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
             await deleteShoppingList(selectedList.id);
-            setSelectedList(null);
-            setItems([]);
+            goBackToListOverview();
             loadLists();
           },
         },
@@ -560,17 +562,16 @@ export default function ShoppingListScreen() {
     }
 
     if (result.data) {
-      // Refresh lists and select the new one
+      // Refresh lists and navigate to the new list
       await loadLists();
       loadListItems(result.data.list);
-      setMode('lists');
       setScanResult(null);
       setCapturedImages([]);
     }
   };
 
   const cancelScan = () => {
-    setMode('lists');
+    setMode('listOverview');
     setCapturedImages([]);
     setScanResult(null);
     setManuallyAddedItems(new Set());
@@ -895,8 +896,9 @@ export default function ShoppingListScreen() {
   const renderScanResults = () => {
     if (!scanResult) return null;
 
-    const lowItems = scanResult.inventory.filter(i => i.needsRestock);
-    const okItems = scanResult.inventory.filter(i => !i.needsRestock);
+    const lowItems = scanResult.inventory.filter(i => i.needsRestock && i.quantityLevel !== 'unknown');
+    const unknownItems = scanResult.inventory.filter(i => i.quantityLevel === 'unknown');
+    const okItems = scanResult.inventory.filter(i => !i.needsRestock && i.quantityLevel !== 'unknown');
 
     return (
       <View style={styles.resultsContainer}>
@@ -1086,6 +1088,50 @@ export default function ShoppingListScreen() {
               })}
             </View>
           )}
+
+          {/* Unknown Quantity Items - Items we couldn't determine quantity for */}
+          {unknownItems.length > 0 && (
+            <View style={styles.resultsSection}>
+              <Text style={styles.resultsSectionTitle}>
+                <Ionicons name="help-circle" size={18} color="#9CA3AF" /> Unknown Quantity
+              </Text>
+              <Text style={styles.resultsSectionSubtitle}>
+                Couldn't determine how much is left. Tap + if you need to restock.
+              </Text>
+              {unknownItems.map((item, index) => {
+                const alreadyInList = isItemInShoppingList(item.name);
+                return (
+                  <View key={index} style={[styles.inventoryItem, styles.inventoryItemUnknown]}>
+                    <View style={styles.inventoryItemLeft}>
+                      <View style={styles.unknownQuantityIcon}>
+                        <Ionicons name="help" size={16} color="#9CA3AF" />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.inventoryItemName}>{item.name}</Text>
+                        <Text style={styles.inventoryItemDetail}>
+                          Quantity unknown
+                          {item.location ? ` • ${item.location}` : ''}
+                        </Text>
+                      </View>
+                    </View>
+                    {alreadyInList ? (
+                      <View style={styles.addedBadge}>
+                        <Ionicons name="checkmark" size={14} color="#22C55E" />
+                        <Text style={styles.addedBadgeText}>Added</Text>
+                      </View>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.addToListButton}
+                        onPress={() => addInventoryItemToList(item)}
+                      >
+                        <Ionicons name="add" size={18} color="#3B82F6" />
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                );
+              })}
+            </View>
+          )}
         </ScrollView>
 
         {/* Create List Button */}
@@ -1122,46 +1168,12 @@ export default function ShoppingListScreen() {
   };
 
   // ============================================
-  // RENDER LISTS VIEW
+  // RENDER LISTS VIEW (Detail View - shows items in selected list)
   // ============================================
   const renderListsView = () => {
-    if (loading) {
-      return (
-        <View style={styles.container}>
-          <LinearGradient colors={['#1a1a2e', '#16213e']} style={StyleSheet.absoluteFill} />
-          {/* Hero Gradient Area for loading state */}
-          <LinearGradient
-            colors={['#0f172a', '#1E5AA8', '#1a1a2e']}
-            start={{ x: 0.5, y: 0 }}
-            end={{ x: 0.5, y: 1 }}
-            style={[styles.heroGradient, { paddingTop: insets.top }]}
-          >
-            <LinearGradient
-              pointerEvents="none"
-              colors={['rgba(255,255,255,0.25)', 'rgba(255,255,255,0.10)', 'rgba(255,255,255,0.00)']}
-              locations={[0, 0.45, 1]}
-              start={{ x: 0.2, y: 0 }}
-              end={{ x: 0.8, y: 1 }}
-              style={StyleSheet.absoluteFill}
-            />
-            {renderHeroWatermark()}
-            <View style={styles.heroControls}>
-              <TouchableOpacity style={styles.heroBackButton} onPress={() => navigation.goBack()}>
-                <Ionicons name="arrow-back" size={24} color="#ffffff" />
-              </TouchableOpacity>
-              <View style={styles.heroTitleContainer}>
-                <Ionicons name="cart" size={26} color="#ffffff" style={{ marginRight: 10 }} />
-                <Text style={styles.heroTitle}>Shopping Lists</Text>
-              </View>
-              <View style={{ width: 40 }} />
-            </View>
-          </LinearGradient>
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color="#3B82F6" />
-            <Text style={styles.loadingText}>Loading lists...</Text>
-          </View>
-        </View>
-      );
+    if (!selectedList) {
+      // Safety fallback - should not happen
+      return renderListOverview();
     }
 
     return (
@@ -1169,14 +1181,13 @@ export default function ShoppingListScreen() {
         {/* Background */}
         <LinearGradient colors={['#1a1a2e', '#16213e']} style={StyleSheet.absoluteFill} />
 
-        {/* Hero Gradient Area - fades from dark blue into the background */}
+        {/* Hero Gradient Area */}
         <LinearGradient
           colors={['#0f172a', '#1E5AA8', '#1a1a2e']}
           start={{ x: 0.5, y: 0 }}
           end={{ x: 0.5, y: 1 }}
           style={[styles.heroGradient, { paddingTop: insets.top }]}
         >
-          {/* Glass sheen overlay */}
           <LinearGradient
             pointerEvents="none"
             colors={[
@@ -1189,105 +1200,50 @@ export default function ShoppingListScreen() {
             end={{ x: 0.8, y: 1 }}
             style={StyleSheet.absoluteFill}
           />
-          {/* Ghost checkmark watermark */}
           {renderHeroWatermark()}
 
-          {/* Floating controls */}
+          {/* Header with back button */}
           <View style={styles.heroControls}>
             <TouchableOpacity
               style={styles.heroBackButton}
-              onPress={() => navigation.goBack()}
+              onPress={goBackToListOverview}
               activeOpacity={0.7}
             >
               <Ionicons name="arrow-back" size={24} color="#ffffff" />
             </TouchableOpacity>
 
             <View style={styles.heroTitleContainer}>
-              <Ionicons name="cart" size={26} color="#ffffff" style={{ marginRight: 10 }} />
-              <Text style={styles.heroTitle}>Shopping Lists</Text>
+              <Ionicons
+                name={selectedList.list_type === 'hardware' ? 'hammer' : 'cart'}
+                size={24}
+                color="#ffffff"
+                style={{ marginRight: 10 }}
+              />
+              <Text style={styles.heroTitle} numberOfLines={1}>
+                {selectedList.name}
+              </Text>
             </View>
 
             <View style={styles.heroActions}>
-              {selectedList && (
-                <>
-                  <TouchableOpacity
-                    style={styles.heroAction}
-                    onPress={handleShareList}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="share-outline" size={22} color="#ffffff" />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={styles.heroAction}
-                    onPress={handleDeleteList}
-                    activeOpacity={0.7}
-                  >
-                    <Ionicons name="trash-outline" size={22} color="#ffffff" />
-                  </TouchableOpacity>
-                </>
-              )}
+              <TouchableOpacity
+                style={styles.heroAction}
+                onPress={handleShareList}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="share-outline" size={22} color="#ffffff" />
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.heroAction}
+                onPress={handleDeleteList}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="trash-outline" size={22} color="#ffffff" />
+              </TouchableOpacity>
             </View>
           </View>
         </LinearGradient>
 
-        {/* List tabs */}
-        {lists.length > 0 && (
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            style={styles.tabsContainer}
-            contentContainerStyle={styles.tabsContent}
-          >
-            {lists.map(list => (
-              <TouchableOpacity
-                key={list.id}
-                style={[
-                  styles.listTab,
-                  selectedList?.id === list.id && styles.listTabActive,
-                ]}
-                onPress={() => loadListItems(list)}
-              >
-                <Ionicons
-                  name={list.list_type === 'hardware' ? 'hammer' : 'cart'}
-                  size={16}
-                  color={selectedList?.id === list.id ? '#ffffff' : 'rgba(255,255,255,0.6)'}
-                />
-                <Text
-                  style={[
-                    styles.listTabText,
-                    selectedList?.id === list.id && styles.listTabTextActive,
-                  ]}
-                  numberOfLines={1}
-                >
-                  {list.name}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-        )}
-
-        {/* Empty state */}
-        {lists.length === 0 ? (
-          <View style={styles.emptyState}>
-            <Ionicons name="cart-outline" size={64} color="rgba(255,255,255,0.3)" />
-            <Text style={styles.emptyTitle}>No Shopping Lists</Text>
-            <Text style={styles.emptySubtext}>
-              Scan your fridge or pantry to generate a shopping list
-            </Text>
-            <TouchableOpacity
-              style={styles.emptyStateScanButton}
-              onPress={startScan}
-            >
-              <LinearGradient
-                colors={['#3B82F6', '#2563EB']}
-                style={styles.emptyStateScanButtonGradient}
-              >
-                <Ionicons name="scan" size={20} color="#ffffff" />
-                <Text style={styles.emptyStateScanButtonText}>Scan Now</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          </View>
-        ) : loadingItems ? (
+        {loadingItems ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#3B82F6" />
           </View>
@@ -1517,23 +1473,208 @@ export default function ShoppingListScreen() {
             </ScrollView>
           </>
         )}
+      </View>
+    );
+  };
 
-        {/* Floating Scan Button */}
-        {lists.length > 0 && (
-          <TouchableOpacity
-            style={[styles.floatingScanButton, { bottom: insets.bottom + 24 }]}
-            onPress={startScan}
-            activeOpacity={0.8}
+  // ============================================
+  // RENDER LIST OVERVIEW (List Cards View)
+  // ============================================
+  const renderListOverview = () => {
+    if (loading) {
+      return (
+        <View style={styles.container}>
+          <LinearGradient colors={['#1a1a2e', '#16213e']} style={StyleSheet.absoluteFill} />
+          <LinearGradient
+            colors={['#0f172a', '#1E5AA8', '#1a1a2e']}
+            start={{ x: 0.5, y: 0 }}
+            end={{ x: 0.5, y: 1 }}
+            style={[styles.heroGradient, { paddingTop: insets.top }]}
           >
             <LinearGradient
-              colors={['#3B82F6', '#2563EB']}
-              style={styles.floatingScanButtonGradient}
+              pointerEvents="none"
+              colors={['rgba(255,255,255,0.25)', 'rgba(255,255,255,0.10)', 'rgba(255,255,255,0.00)']}
+              locations={[0, 0.45, 1]}
+              start={{ x: 0.2, y: 0 }}
+              end={{ x: 0.8, y: 1 }}
+              style={StyleSheet.absoluteFill}
+            />
+            {renderHeroWatermark()}
+            <View style={styles.heroControls}>
+              <TouchableOpacity style={styles.heroBackButton} onPress={() => navigation.goBack()}>
+                <Ionicons name="arrow-back" size={24} color="#ffffff" />
+              </TouchableOpacity>
+              <View style={styles.heroTitleContainer}>
+                <Ionicons name="cart" size={26} color="#ffffff" style={{ marginRight: 10 }} />
+                <Text style={styles.heroTitle}>Shopping Lists</Text>
+              </View>
+              <View style={{ width: 40 }} />
+            </View>
+          </LinearGradient>
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#3B82F6" />
+            <Text style={styles.loadingText}>Loading lists...</Text>
+          </View>
+        </View>
+      );
+    }
+
+    return (
+      <View style={styles.container}>
+        <LinearGradient colors={['#1a1a2e', '#16213e']} style={StyleSheet.absoluteFill} />
+
+        {/* Hero Gradient Area */}
+        <LinearGradient
+          colors={['#0f172a', '#1E5AA8', '#1a1a2e']}
+          start={{ x: 0.5, y: 0 }}
+          end={{ x: 0.5, y: 1 }}
+          style={[styles.heroGradient, { paddingTop: insets.top }]}
+        >
+          <LinearGradient
+            pointerEvents="none"
+            colors={[
+              'rgba(255,255,255,0.25)',
+              'rgba(255,255,255,0.10)',
+              'rgba(255,255,255,0.00)',
+            ]}
+            locations={[0, 0.45, 1]}
+            start={{ x: 0.2, y: 0 }}
+            end={{ x: 0.8, y: 1 }}
+            style={StyleSheet.absoluteFill}
+          />
+          {renderHeroWatermark()}
+
+          <View style={styles.heroControls}>
+            <TouchableOpacity
+              style={styles.heroBackButton}
+              onPress={() => navigation.goBack()}
+              activeOpacity={0.7}
             >
-              <Ionicons name="scan" size={24} color="#ffffff" />
-              <Text style={styles.floatingScanButtonText}>Scan</Text>
-            </LinearGradient>
-          </TouchableOpacity>
+              <Ionicons name="arrow-back" size={24} color="#ffffff" />
+            </TouchableOpacity>
+
+            <View style={styles.heroTitleContainer}>
+              <Ionicons name="cart" size={26} color="#ffffff" style={{ marginRight: 10 }} />
+              <Text style={styles.heroTitle}>Shopping Lists</Text>
+            </View>
+
+            <View style={{ width: 40 }} />
+          </View>
+        </LinearGradient>
+
+        {/* List Cards or Empty State */}
+        {lists.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Ionicons name="cart-outline" size={64} color="rgba(255,255,255,0.3)" />
+            <Text style={styles.emptyTitle}>No Shopping Lists</Text>
+            <Text style={styles.emptySubtext}>
+              Scan your fridge or pantry to generate a shopping list
+            </Text>
+            <TouchableOpacity
+              style={styles.emptyStateScanButton}
+              onPress={startScan}
+            >
+              <LinearGradient
+                colors={['#3B82F6', '#2563EB']}
+                style={styles.emptyStateScanButtonGradient}
+              >
+                <Ionicons name="scan" size={20} color="#ffffff" />
+                <Text style={styles.emptyStateScanButtonText}>Scan Now</Text>
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <ScrollView
+            style={styles.listCardsScrollView}
+            contentContainerStyle={[styles.listCardsContent, { paddingBottom: insets.bottom + 100 }]}
+          >
+            <Text style={styles.listCardsHeader}>
+              Tap a list to view items
+            </Text>
+
+            {lists.map(list => {
+              const listType = list.list_type === 'hardware' ? 'hammer' : 'cart';
+              const itemCount = list.item_count || 0;
+              const completedCount = list.completed_count || 0;
+              const progress = itemCount > 0 ? (completedCount / itemCount) * 100 : 0;
+
+              return (
+                <TouchableOpacity
+                  key={list.id}
+                  style={styles.listCard}
+                  onPress={() => loadListItems(list)}
+                  activeOpacity={0.7}
+                >
+                  <LinearGradient
+                    colors={list.list_type === 'hardware'
+                      ? ['rgba(16, 185, 129, 0.15)', 'rgba(16, 185, 129, 0.05)']
+                      : ['rgba(59, 130, 246, 0.15)', 'rgba(59, 130, 246, 0.05)']}
+                    style={styles.listCardGradient}
+                  >
+                    <View style={styles.listCardHeader}>
+                      <View style={[
+                        styles.listCardIcon,
+                        { backgroundColor: list.list_type === 'hardware' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(59, 130, 246, 0.2)' }
+                      ]}>
+                        <Ionicons
+                          name={listType}
+                          size={24}
+                          color={list.list_type === 'hardware' ? '#10B981' : '#3B82F6'}
+                        />
+                      </View>
+                      <View style={styles.listCardInfo}>
+                        <Text style={styles.listCardTitle}>{list.name}</Text>
+                        <Text style={styles.listCardSubtitle}>
+                          {itemCount === 0
+                            ? 'No items'
+                            : `${itemCount - completedCount} of ${itemCount} items remaining`}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-forward" size={24} color="rgba(255,255,255,0.4)" />
+                    </View>
+
+                    {itemCount > 0 && (
+                      <View style={styles.listCardProgress}>
+                        <View style={styles.listCardProgressBar}>
+                          <View
+                            style={[
+                              styles.listCardProgressFill,
+                              { width: `${progress}%` }
+                            ]}
+                          />
+                        </View>
+                        <Text style={styles.listCardProgressText}>
+                          {Math.round(progress)}% complete
+                        </Text>
+                      </View>
+                    )}
+
+                    {list.source_name && (
+                      <Text style={styles.listCardSource}>
+                        From: {list.source_name}
+                      </Text>
+                    )}
+                  </LinearGradient>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
         )}
+
+        {/* Floating Scan Button */}
+        <TouchableOpacity
+          style={[styles.floatingScanButton, { bottom: insets.bottom + 24 }]}
+          onPress={startScan}
+          activeOpacity={0.8}
+        >
+          <LinearGradient
+            colors={['#3B82F6', '#2563EB']}
+            style={styles.floatingScanButtonGradient}
+          >
+            <Ionicons name="scan" size={24} color="#ffffff" />
+            <Text style={styles.floatingScanButtonText}>Scan</Text>
+          </LinearGradient>
+        </TouchableOpacity>
       </View>
     );
   };
@@ -1542,6 +1683,10 @@ export default function ShoppingListScreen() {
   // MAIN RENDER
   // ============================================
   switch (mode) {
+    case 'listOverview':
+      return renderListOverview();
+    case 'listDetail':
+      return renderListsView();
     case 'scanType':
       return renderScanTypeSelector();
     case 'scanning':
@@ -1551,7 +1696,7 @@ export default function ShoppingListScreen() {
     case 'results':
       return renderScanResults();
     default:
-      return renderListsView();
+      return renderListOverview();
   }
 }
 
@@ -2282,6 +2427,20 @@ const styles = StyleSheet.create({
   inventoryItemOk: {
     opacity: 0.6,
   },
+  inventoryItemUnknown: {
+    borderWidth: 1,
+    borderColor: 'rgba(156, 163, 175, 0.3)',
+    borderStyle: 'dashed',
+  },
+  unknownQuantityIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(156, 163, 175, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
   inventoryItemLeft: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -2453,5 +2612,83 @@ const styles = StyleSheet.create({
   voiceInputButtonActive: {
     backgroundColor: '#EF4444',
     borderColor: '#EF4444',
+  },
+
+  // List Cards Overview styles
+  listCardsScrollView: {
+    flex: 1,
+  },
+  listCardsContent: {
+    padding: 20,
+  },
+  listCardsHeader: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.5)',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  listCard: {
+    marginBottom: 16,
+    borderRadius: 16,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  listCardGradient: {
+    padding: 16,
+  },
+  listCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  listCardIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  listCardInfo: {
+    flex: 1,
+  },
+  listCardTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#ffffff',
+    marginBottom: 4,
+  },
+  listCardSubtitle: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.6)',
+  },
+  listCardProgress: {
+    marginTop: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  listCardProgressBar: {
+    flex: 1,
+    height: 6,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  listCardProgressFill: {
+    height: '100%',
+    backgroundColor: '#22C55E',
+    borderRadius: 3,
+  },
+  listCardProgressText: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.5)',
+    minWidth: 80,
+  },
+  listCardSource: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.4)',
+    marginTop: 10,
+    fontStyle: 'italic',
   },
 });

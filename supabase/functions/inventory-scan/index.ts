@@ -270,8 +270,22 @@ QUANTITY LEVELS DEFINED:
 - **half**: ~50% remaining
 - **low**: 10-30% remaining, NEEDS RESTOCKING SOON (needsRestock = true)
 - **empty**: <10% remaining or appears nearly gone (needsRestock = true)
+- **unknown**: Use ONLY when quantity CANNOT be determined (see below)
 
-**IMPORTANT**: When uncertain, err on the side of LOWER quantity. It's better to suggest restocking something that's actually half-full than to miss something that's nearly empty.
+**WHEN TO USE "unknown" QUANTITY:**
+Use "unknown" ONLY in these specific cases:
+- Opaque containers where you cannot see inside (e.g., solid cereal boxes, opaque storage containers)
+- Items where the fill level is completely hidden from view
+- Items partially obscured or blocked by other items where quantity cannot be estimated
+- Sealed packages where content quantity cannot be assessed visually
+
+DO NOT use "unknown" when:
+- You can see any liquid line through a bottle/jar
+- The package appears full or heavy
+- The package appears light, empty, or collapsed
+- You can make ANY reasonable estimate
+
+**IMPORTANT**: When uncertain but you CAN make an estimate, err on the side of LOWER quantity. Only use "unknown" when you truly cannot determine anything about the quantity.
 
 EXAMPLES of good product identification:
 - "Chobani Greek Yogurt Strawberry 5.3oz" NOT "yogurt"
@@ -336,8 +350,20 @@ QUANTITY LEVELS DEFINED:
 - **half**: ~50% remaining
 - **low**: 10-30% remaining (needsRestock = true)
 - **empty**: <10% remaining (needsRestock = true)
+- **unknown**: Use ONLY when quantity CANNOT be determined
 
-**IMPORTANT**: When uncertain, err on the side of LOWER quantity.
+**WHEN TO USE "unknown" QUANTITY:**
+Use "unknown" ONLY when:
+- Opaque boxes/containers where you cannot see inside (e.g., sealed cereal boxes, opaque tins)
+- Items completely blocked or obscured from view
+- Sealed packages where content quantity cannot be assessed
+
+DO NOT use "unknown" when:
+- The box/bag looks full or heavy
+- The box/bag appears light, collapsed, or crinkled
+- You can make ANY reasonable estimate
+
+**IMPORTANT**: When uncertain but you CAN estimate, err on the side of LOWER quantity. Only use "unknown" when you truly cannot determine anything.
 
 EXAMPLES:
 - "Quaker Old Fashioned Oats 42oz" NOT "oatmeal"

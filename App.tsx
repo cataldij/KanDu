@@ -27,6 +27,7 @@ import GuestKitDetailScreen from './screens/GuestKitDetailScreen';
 import AddSafetyItemScreen from './screens/AddSafetyItemScreen';
 import GuestLinkViewScreen from './screens/GuestLinkViewScreen';
 import ShoppingListScreen from './screens/ShoppingListScreen';
+import RecipesScreen from './screens/RecipesScreen';
 import StartupCinematicOverlay from './components/StartupCinematicOverlay';
 
 export type RootStackParamList = {
@@ -86,6 +87,7 @@ export type RootStackParamList = {
   AddSafetyItem: { kitId: string; itemId?: string };
   GuestLinkView: { slug: string };
   ShoppingList: { listId?: string };
+  Recipes: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -246,6 +248,14 @@ function AppNavigator() {
         component={ShoppingListScreen}
         options={{
           title: 'Shopping List',
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="Recipes"
+        component={RecipesScreen}
+        options={{
+          title: 'Recipes',
           headerShown: false,
         }}
       />

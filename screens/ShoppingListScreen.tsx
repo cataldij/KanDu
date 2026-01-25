@@ -17,6 +17,9 @@ import {
   TextInput,
   Share,
   Image,
+  Modal,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -37,6 +40,7 @@ import {
   deleteShoppingList,
   updateShoppingListItem,
   scanInventory,
+  createShoppingList,
   createShoppingListFromScan,
   ShoppingList,
   ShoppingListItem,
@@ -172,6 +176,12 @@ export default function ShoppingListScreen() {
   const [isListening, setIsListening] = useState(false);
   const voiceListenersRef = useRef<any[]>([]);
 
+  // Create list modal state
+  const [showCreateListModal, setShowCreateListModal] = useState(false);
+  const [newListName, setNewListName] = useState('');
+  const [newListType, setNewListType] = useState<'grocery' | 'hardware'>('grocery');
+  const [isCreatingManualList, setIsCreatingManualList] = useState(false);
+
   // Load lists on focus
   useFocusEffect(
     useCallback(() => {
@@ -218,6 +228,41 @@ export default function ShoppingListScreen() {
     setSelectedList(null);
     setItems([]);
     setMode('listOverview');
+  };
+
+  const handleCreateManualList = async () => {
+    if (!newListName.trim()) {
+      Alert.alert('Error', 'Please enter a list name');
+      return;
+    }
+
+    setIsCreatingManualList(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+    const result = await createShoppingList(
+      newListName.trim(),
+      newListType,
+      'manual',
+      'Created manually'
+    );
+
+    setIsCreatingManualList(false);
+
+    if (result.error) {
+      Alert.alert('Error', result.error);
+      return;
+    }
+
+    if (result.data) {
+      // Close modal and reset state
+      setShowCreateListModal(false);
+      setNewListName('');
+      setNewListType('grocery');
+
+      // Refresh lists and navigate to the new list
+      await loadLists();
+      loadListItems(result.data);
+    }
   };
 
   const handleToggleItem = async (item: ShoppingListItem) => {
@@ -1558,7 +1603,13 @@ export default function ShoppingListScreen() {
               <Text style={styles.heroTitle}>Shopping Lists</Text>
             </View>
 
-            <View style={{ width: 40 }} />
+            <TouchableOpacity
+              style={styles.heroBackButton}
+              onPress={() => setShowCreateListModal(true)}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="add" size={28} color="#ffffff" />
+            </TouchableOpacity>
           </View>
         </LinearGradient>
 
@@ -1568,20 +1619,29 @@ export default function ShoppingListScreen() {
             <Ionicons name="cart-outline" size={64} color="rgba(255,255,255,0.3)" />
             <Text style={styles.emptyTitle}>No Shopping Lists</Text>
             <Text style={styles.emptySubtext}>
-              Scan your fridge or pantry to generate a shopping list
+              Scan your fridge or pantry, or create a list manually
             </Text>
-            <TouchableOpacity
-              style={styles.emptyStateScanButton}
-              onPress={startScan}
-            >
-              <LinearGradient
-                colors={['#3B82F6', '#2563EB']}
-                style={styles.emptyStateScanButtonGradient}
+            <View style={styles.emptyStateButtons}>
+              <TouchableOpacity
+                style={styles.emptyStateScanButton}
+                onPress={startScan}
               >
-                <Ionicons name="scan" size={20} color="#ffffff" />
-                <Text style={styles.emptyStateScanButtonText}>Scan Now</Text>
-              </LinearGradient>
-            </TouchableOpacity>
+                <LinearGradient
+                  colors={['#3B82F6', '#2563EB']}
+                  style={styles.emptyStateScanButtonGradient}
+                >
+                  <Ionicons name="scan" size={20} color="#ffffff" />
+                  <Text style={styles.emptyStateScanButtonText}>Scan Now</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.emptyStateCreateButton}
+                onPress={() => setShowCreateListModal(true)}
+              >
+                <Ionicons name="add" size={20} color="#3B82F6" />
+                <Text style={styles.emptyStateCreateButtonText}>Create List</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         ) : (
           <ScrollView
@@ -1675,6 +1735,121 @@ export default function ShoppingListScreen() {
             <Text style={styles.floatingScanButtonText}>Scan</Text>
           </LinearGradient>
         </TouchableOpacity>
+
+        {/* Create List Modal */}
+        <Modal
+          visible={showCreateListModal}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowCreateListModal(false)}
+        >
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.modalOverlay}
+          >
+            <TouchableOpacity
+              style={styles.modalOverlay}
+              activeOpacity={1}
+              onPress={() => setShowCreateListModal(false)}
+            >
+              <TouchableOpacity
+                activeOpacity={1}
+                onPress={(e) => e.stopPropagation()}
+                style={styles.modalContent}
+              >
+                <LinearGradient
+                  colors={['#1E293B', '#0F172A']}
+                  style={styles.modalGradient}
+                >
+                  <Text style={styles.modalTitle}>Create New List</Text>
+
+                  <Text style={styles.modalLabel}>List Name</Text>
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="e.g., Weekly Groceries"
+                    placeholderTextColor="rgba(255,255,255,0.4)"
+                    value={newListName}
+                    onChangeText={setNewListName}
+                    autoFocus
+                  />
+
+                  <Text style={styles.modalLabel}>List Type</Text>
+                  <View style={styles.modalTypeSelector}>
+                    <TouchableOpacity
+                      style={[
+                        styles.modalTypeOption,
+                        newListType === 'grocery' && styles.modalTypeOptionSelected,
+                      ]}
+                      onPress={() => setNewListType('grocery')}
+                    >
+                      <Ionicons
+                        name="cart"
+                        size={24}
+                        color={newListType === 'grocery' ? '#3B82F6' : 'rgba(255,255,255,0.5)'}
+                      />
+                      <Text
+                        style={[
+                          styles.modalTypeText,
+                          newListType === 'grocery' && styles.modalTypeTextSelected,
+                        ]}
+                      >
+                        Grocery
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.modalTypeOption,
+                        newListType === 'hardware' && styles.modalTypeOptionSelected,
+                      ]}
+                      onPress={() => setNewListType('hardware')}
+                    >
+                      <Ionicons
+                        name="hammer"
+                        size={24}
+                        color={newListType === 'hardware' ? '#10B981' : 'rgba(255,255,255,0.5)'}
+                      />
+                      <Text
+                        style={[
+                          styles.modalTypeText,
+                          newListType === 'hardware' && styles.modalTypeTextSelected,
+                        ]}
+                      >
+                        Hardware
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <View style={styles.modalButtons}>
+                    <TouchableOpacity
+                      style={styles.modalCancelButton}
+                      onPress={() => {
+                        setShowCreateListModal(false);
+                        setNewListName('');
+                        setNewListType('grocery');
+                      }}
+                    >
+                      <Text style={styles.modalCancelText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        styles.modalCreateButton,
+                        !newListName.trim() && styles.modalCreateButtonDisabled,
+                      ]}
+                      onPress={handleCreateManualList}
+                      disabled={!newListName.trim() || isCreatingManualList}
+                    >
+                      {isCreatingManualList ? (
+                        <ActivityIndicator size="small" color="#ffffff" />
+                      ) : (
+                        <Text style={styles.modalCreateText}>Create</Text>
+                      )}
+                    </TouchableOpacity>
+                  </View>
+                </LinearGradient>
+              </TouchableOpacity>
+            </TouchableOpacity>
+          </KeyboardAvoidingView>
+        </Modal>
       </View>
     );
   };
@@ -2690,5 +2865,131 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.4)',
     marginTop: 10,
     fontStyle: 'italic',
+  },
+
+  // Empty state buttons
+  emptyStateButtons: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  emptyStateCreateButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    paddingHorizontal: 20,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(59, 130, 246, 0.4)',
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+  },
+  emptyStateCreateButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#3B82F6',
+  },
+
+  // Create List Modal styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    width: '85%',
+    maxWidth: 360,
+    borderRadius: 20,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  modalGradient: {
+    padding: 24,
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: '700',
+    color: '#ffffff',
+    marginBottom: 24,
+    textAlign: 'center',
+  },
+  modalLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.7)',
+    marginBottom: 8,
+  },
+  modalInput: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: '#ffffff',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+    marginBottom: 20,
+  },
+  modalTypeSelector: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 24,
+  },
+  modalTypeOption: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  modalTypeOptionSelected: {
+    backgroundColor: 'rgba(59, 130, 246, 0.15)',
+    borderColor: 'rgba(59, 130, 246, 0.4)',
+  },
+  modalTypeText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.5)',
+  },
+  modalTypeTextSelected: {
+    color: '#ffffff',
+  },
+  modalButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modalCancelButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    alignItems: 'center',
+  },
+  modalCancelText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.7)',
+  },
+  modalCreateButton: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#3B82F6',
+    alignItems: 'center',
+  },
+  modalCreateButtonDisabled: {
+    opacity: 0.5,
+  },
+  modalCreateText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#ffffff',
   },
 });

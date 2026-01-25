@@ -60,7 +60,16 @@
       "Bash(eas env:create:*)",
       "Bash(npx eas build:view:*)",
       "Bash(npx eas:*)",
-      "Bash(npm search:*)"
+      "Bash(npm search:*)",
+      "Bash(supabase projects list:*)",
+      "Bash(npm run generate-assets:*)",
+      "Bash(supabase link:*)",
+      "Bash(supabase db push:*)",
+      "Bash(supabase db pull:*)",
+      "Bash(supabase migration:*)",
+      "Bash(supabase status:*)",
+      "Bash(supabase projects api-keys:*)",
+      "Bash(git init:*)"
     ],
     "additionalDirectories": [
       "c:\\Users\\socce\\OneDrive\\Documents\\kandu-fresh\\screens"

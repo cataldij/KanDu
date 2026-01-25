@@ -30,8 +30,11 @@ import {
   addGuestKitItem,
   updateGuestKitItem,
   getGuestKit,
+  getGuestKitZones,
   GuestKitItem,
   GuestKitItemType,
+  GuestKitZone,
+  ZONE_TYPES,
 } from '../services/api';
 import { supabase } from '../services/supabase';
 
@@ -105,6 +108,7 @@ interface FormData {
   warning_text: string;
   route_description: string;
   priority: 'critical' | 'important' | 'helpful';
+  zone_id?: string;
 }
 
 export default function AddSafetyItemScreen() {
@@ -115,9 +119,10 @@ export default function AddSafetyItemScreen() {
   const { kitId, itemId, editMode } = route.params || {};
 
   const [step, setStep] = useState<'select' | 'details'>('select');
-  const [loading, setLoading] = useState(editMode);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState<string | null>(null);
+  const [zones, setZones] = useState<GuestKitZone[]>([]);
 
   const [data, setData] = useState<FormData>({
     item_type: '',
@@ -130,39 +135,55 @@ export default function AddSafetyItemScreen() {
     warning_text: '',
     route_description: '',
     priority: 'important',
+    zone_id: undefined,
   });
 
   useEffect(() => {
-    if (editMode && itemId) {
-      loadExistingItem();
-    }
-  }, [editMode, itemId]);
+    loadZonesAndItem();
+  }, [kitId, editMode, itemId]);
 
-  const loadExistingItem = async () => {
+  const loadZonesAndItem = async () => {
     setLoading(true);
-    const result = await getGuestKit(kitId);
-    if (result.error) {
-      Alert.alert('Error', result.error);
-      navigation.goBack();
-    } else if (result.data) {
-      const item = result.data.items.find((i) => i.id === itemId);
-      if (item) {
-        setData({
-          item_type: item.item_type,
-          custom_name: item.custom_name || '',
-          hint: item.hint || '',
-          overview_image_url: item.overview_image_url || undefined,
-          destination_image_url: item.destination_image_url || undefined,
-          control_image_url: item.control_image_url || undefined,
-          instructions: item.instructions || '',
-          warning_text: item.warning_text || '',
-          route_description: item.route_description || '',
-          priority: item.priority || 'important',
-        });
-        setStep('details');
+    try {
+      // Load zones for zone selection
+      const zonesResult = await getGuestKitZones(kitId);
+      if (zonesResult.data?.zones) {
+        setZones(zonesResult.data.zones);
       }
+
+      // Load existing item if in edit mode
+      if (editMode && itemId) {
+        const result = await getGuestKit(kitId);
+        if (result.error) {
+          Alert.alert('Error', result.error);
+          navigation.goBack();
+          return;
+        }
+        if (result.data) {
+          const item = result.data.items.find((i) => i.id === itemId);
+          if (item) {
+            setData({
+              item_type: item.item_type,
+              custom_name: item.custom_name || '',
+              hint: item.hint || '',
+              overview_image_url: item.overview_image_url || undefined,
+              destination_image_url: item.destination_image_url || undefined,
+              control_image_url: item.control_image_url || undefined,
+              instructions: item.instructions || '',
+              warning_text: item.warning_text || '',
+              route_description: item.route_description || '',
+              priority: item.priority || 'important',
+              zone_id: item.zone_id || undefined,
+            });
+            setStep('details');
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Load error:', err);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const updateData = (field: keyof FormData, value: any) => {
@@ -442,6 +463,70 @@ export default function AddSafetyItemScreen() {
                 placeholder="e.g., Tool Cabinet"
                 placeholderTextColor="#94a3b8"
               />
+            </View>
+          )}
+
+          {/* Zone assignment */}
+          {zones.length > 0 && (
+            <View style={styles.inputGroup}>
+              <Text style={styles.inputLabel}>Zone Location</Text>
+              <Text style={styles.inputDescription}>
+                Select the zone where this item is located
+              </Text>
+              <View style={styles.zoneSelector}>
+                <TouchableOpacity
+                  style={[
+                    styles.zoneOption,
+                    !data.zone_id && styles.zoneOptionSelected,
+                  ]}
+                  onPress={() => updateData('zone_id', undefined)}
+                >
+                  <Ionicons
+                    name="home-outline"
+                    size={18}
+                    color={!data.zone_id ? '#1E90FF' : '#64748b'}
+                  />
+                  <Text
+                    style={[
+                      styles.zoneOptionText,
+                      !data.zone_id && styles.zoneOptionTextSelected,
+                    ]}
+                  >
+                    Kitchen (Default)
+                  </Text>
+                </TouchableOpacity>
+                {zones.map((zone) => {
+                  const isSelected = data.zone_id === zone.id;
+                  const zoneInfo = ZONE_TYPES[zone.zone_type as keyof typeof ZONE_TYPES];
+                  return (
+                    <TouchableOpacity
+                      key={zone.id}
+                      style={[
+                        styles.zoneOption,
+                        isSelected && styles.zoneOptionSelected,
+                      ]}
+                      onPress={() => updateData('zone_id', zone.id)}
+                    >
+                      <Ionicons
+                        name={(zoneInfo?.icon || 'location') as any}
+                        size={18}
+                        color={isSelected ? '#1E90FF' : '#64748b'}
+                      />
+                      <Text
+                        style={[
+                          styles.zoneOptionText,
+                          isSelected && styles.zoneOptionTextSelected,
+                        ]}
+                      >
+                        {zone.name}
+                      </Text>
+                      {zone.pathway_complete && (
+                        <Ionicons name="checkmark-circle" size={14} color="#10b981" />
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
             </View>
           )}
 
@@ -915,6 +1000,33 @@ const styles = StyleSheet.create({
   priorityDescription: {
     fontSize: 12,
     color: '#64748b',
+  },
+  zoneSelector: {
+    gap: 8,
+  },
+  zoneOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+    borderWidth: 2,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    padding: 14,
+    gap: 10,
+  },
+  zoneOptionSelected: {
+    borderColor: '#1E90FF',
+    backgroundColor: '#f0f9ff',
+  },
+  zoneOptionText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#64748b',
+  },
+  zoneOptionTextSelected: {
+    color: '#1E90FF',
+    fontWeight: '600',
   },
   bottomButtons: {
     paddingHorizontal: 20,

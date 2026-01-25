@@ -93,10 +93,13 @@ export default function GuestKitDetailScreen() {
   const handleShareKit = async () => {
     if (!kit) return;
     const shareUrl = `${BASE_URL}${kit.slug}`;
+    const ownerName = kit.homeowner_name ? `\n\n- ${kit.homeowner_name}` : '';
+
     try {
       await Share.share({
-        message: `Here's everything you need to know about my home: ${shareUrl}`,
+        message: `Here's your guide to my home with everything you need to know:\n\n${shareUrl}\n\nTap the link to find safety items, WiFi info, and more.${ownerName}`,
         url: shareUrl,
+        title: `${kit.display_name} - Home Guide`,
       });
     } catch (err) {
       console.error('Share error:', err);
@@ -345,12 +348,18 @@ export default function GuestKitDetailScreen() {
         </View>
 
         {/* Quick actions */}
-        <View style={styles.quickActions}>
-          <TouchableOpacity style={styles.quickAction} onPress={handleShareKit}>
-            <Ionicons name="share-outline" size={20} color="#fff" />
-            <Text style={styles.quickActionText}>Share</Text>
-          </TouchableOpacity>
+        {/* Primary action - Send to Guest (opens native share sheet) */}
+        <TouchableOpacity
+          style={styles.sendToGuestButton}
+          onPress={handleShareKit}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="paper-plane" size={20} color="#1E90FF" />
+          <Text style={styles.sendToGuestText}>Send to Guest</Text>
+        </TouchableOpacity>
 
+        {/* Secondary actions */}
+        <View style={styles.quickActions}>
           <TouchableOpacity style={styles.quickAction} onPress={handleCopyLink}>
             <Ionicons name="copy-outline" size={20} color="#fff" />
             <Text style={styles.quickActionText}>Copy Link</Text>
@@ -756,5 +765,27 @@ const styles = StyleSheet.create({
     width: 1,
     height: 40,
     backgroundColor: '#e2e8f0',
+  },
+  // Send to Guest button
+  sendToGuestButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#fff',
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    borderRadius: 25,
+    marginBottom: 12,
+    gap: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  sendToGuestText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1E90FF',
   },
 });

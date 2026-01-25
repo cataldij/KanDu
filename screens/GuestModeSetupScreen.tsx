@@ -30,11 +30,18 @@ import {
   createGuestKit,
   updateGuestKit,
   getGuestKit,
+  getGuestKitZones,
+  createGuestKitZone,
+  updateGuestKitZone,
   GuestKit,
   HomeBaseImage,
+  GuestKitZone,
+  ZoneImage,
+  PathwayImage,
 } from '../services/api';
 import { supabase } from '../services/supabase';
 import GuidedKitchenScan, { KitchenImage } from '../components/GuidedKitchenScan';
+import ZoneSetup from '../components/ZoneSetup';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -61,7 +68,43 @@ interface SetupData {
   expires_at?: string;
 }
 
-const STEPS = ['Basics', 'Home Base', 'Contact', 'Extras', 'Review'];
+const STEPS = ['Basics', 'Home Base', 'Zones', 'Contact', 'Extras', 'Review'];
+
+/**
+ * Upload a local image URI to Supabase Storage and return the public URL
+ */
+async function uploadImageToStorage(
+  localUri: string,
+  folder: string,
+  filename: string
+): Promise<string> {
+  // If already a public URL, return as-is
+  if (localUri.startsWith('http://') || localUri.startsWith('https://')) {
+    return localUri;
+  }
+
+  const response = await fetch(localUri);
+  const blob = await response.blob();
+
+  const filePath = `${folder}/${filename}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from('images')
+    .upload(filePath, blob, {
+      contentType: 'image/jpeg',
+      upsert: true,
+    });
+
+  if (uploadError) {
+    throw uploadError;
+  }
+
+  const { data: urlData } = supabase.storage
+    .from('images')
+    .getPublicUrl(filePath);
+
+  return urlData.publicUrl;
+}
 
 export default function GuestModeSetupScreen() {
   const insets = useSafeAreaInsets();
@@ -75,6 +118,7 @@ export default function GuestModeSetupScreen() {
   const [saving, setSaving] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [showGuidedScan, setShowGuidedScan] = useState(false);
+  const [zones, setZones] = useState<GuestKitZone[]>([]);
 
   const [data, setData] = useState<SetupData>({
     display_name: '',
@@ -131,6 +175,12 @@ export default function GuestModeSetupScreen() {
         access_pin: kit.access_pin || '',
         expires_at: kit.expires_at || undefined,
       });
+
+      // Load zones for this kit
+      const zonesResult = await getGuestKitZones(kitId);
+      if (zonesResult.data?.zones) {
+        setZones(zonesResult.data.zones);
+      }
     }
     setLoading(false);
   };
@@ -240,23 +290,133 @@ export default function GuestModeSetupScreen() {
 
     setSaving(true);
     try {
-      if (editMode && kitId) {
-        const result = await updateGuestKit(kitId, data);
-        if (result.error) {
-          Alert.alert('Error', result.error);
-        } else {
-          navigation.navigate('GuestKitDetail', { kitId });
-        }
-      } else {
-        const result = await createGuestKit(data);
-        if (result.error) {
-          Alert.alert('Error', result.error);
-        } else if (result.data) {
-          // Navigate to add items
-          navigation.replace('GuestKitDetail', { kitId: result.data.kit.id, isNew: true });
+      // Generate a unique folder for this kit
+      const kitFolder = `guest-kits/${Date.now()}`;
+
+      // Upload kitchen scan images to storage
+      const uploadedKitchenImages: KitchenImage[] = [];
+      for (const img of data.home_base_images) {
+        try {
+          const publicUrl = await uploadImageToStorage(
+            img.url,
+            kitFolder,
+            `kitchen-${img.angle}.jpg`
+          );
+          uploadedKitchenImages.push({
+            ...img,
+            url: publicUrl,
+          });
+        } catch (err) {
+          console.error(`Failed to upload kitchen ${img.angle} image:`, err);
+          // Keep original URL on failure
+          uploadedKitchenImages.push(img);
         }
       }
+
+      // Prepare kit data with uploaded images
+      const kitData = {
+        ...data,
+        home_base_images: uploadedKitchenImages,
+      };
+
+      let savedKitId: string;
+
+      if (editMode && kitId) {
+        const result = await updateGuestKit(kitId, kitData);
+        if (result.error) {
+          Alert.alert('Error', result.error);
+          setSaving(false);
+          return;
+        }
+        savedKitId = kitId;
+      } else {
+        const result = await createGuestKit(kitData);
+        if (result.error) {
+          Alert.alert('Error', result.error);
+          setSaving(false);
+          return;
+        }
+        if (!result.data?.kit?.id) {
+          Alert.alert('Error', 'Failed to create guide');
+          setSaving(false);
+          return;
+        }
+        savedKitId = result.data.kit.id;
+      }
+
+      // Save zones with uploaded images
+      for (const zone of zones) {
+        const isTemporaryZone = zone.id.startsWith('temp-');
+        const zoneFolder = `${kitFolder}/zone-${zone.name.toLowerCase().replace(/\s+/g, '-')}`;
+
+        // Upload zone images
+        const uploadedZoneImages: ZoneImage[] = [];
+        for (const img of zone.zone_images || []) {
+          try {
+            const publicUrl = await uploadImageToStorage(
+              img.url,
+              zoneFolder,
+              `zone-${img.angle}.jpg`
+            );
+            uploadedZoneImages.push({ ...img, url: publicUrl });
+          } catch (err) {
+            console.error(`Failed to upload zone ${img.angle} image:`, err);
+            uploadedZoneImages.push(img);
+          }
+        }
+
+        // Upload pathway images
+        const uploadedPathwayImages: PathwayImage[] = [];
+        for (const img of zone.pathway_images || []) {
+          try {
+            const publicUrl = await uploadImageToStorage(
+              img.url,
+              zoneFolder,
+              `pathway-${img.sequence}.jpg`
+            );
+            uploadedPathwayImages.push({ ...img, url: publicUrl });
+          } catch (err) {
+            console.error(`Failed to upload pathway ${img.sequence} image:`, err);
+            uploadedPathwayImages.push(img);
+          }
+        }
+
+        const zoneData = {
+          ...zone,
+          kit_id: savedKitId,
+          zone_images: uploadedZoneImages,
+          pathway_images: uploadedPathwayImages,
+        };
+
+        if (isTemporaryZone) {
+          // Create new zone
+          const { id, ...zoneWithoutId } = zoneData;
+          const result = await createGuestKitZone(zoneWithoutId);
+          if (result.error) {
+            console.error('Failed to create zone:', result.error);
+          }
+        } else {
+          // Update existing zone
+          const result = await updateGuestKitZone(zone.id, {
+            zone_images: uploadedZoneImages,
+            pathway_images: uploadedPathwayImages,
+            zone_scan_complete: zoneData.zone_scan_complete,
+            pathway_complete: zoneData.pathway_complete,
+          });
+          if (result.error) {
+            console.error('Failed to update zone:', result.error);
+          }
+        }
+      }
+
+      // Navigate to detail screen
+      if (editMode) {
+        navigation.navigate('GuestKitDetail', { kitId: savedKitId });
+      } else {
+        navigation.replace('GuestKitDetail', { kitId: savedKitId, isNew: true });
+      }
     } catch (err) {
+      console.error('Save error:', err);
       Alert.alert('Error', 'Failed to save. Please try again.');
     } finally {
       setSaving(false);
@@ -713,6 +873,22 @@ export default function GuestModeSetupScreen() {
     </View>
   );
 
+  const renderZonesStep = () => (
+    <View style={styles.stepContainer}>
+      <Text style={styles.stepTitle}>Add Zones</Text>
+      <Text style={styles.stepDescription}>
+        Add zones where your safety items are located (basement, garage, etc.).
+        Items in the same zone will share the same navigation path.
+      </Text>
+
+      <ZoneSetup
+        zones={zones}
+        onZonesChange={setZones}
+        kitId={kitId}
+      />
+    </View>
+  );
+
   const renderCurrentStep = () => {
     switch (currentStep) {
       case 0:
@@ -720,10 +896,12 @@ export default function GuestModeSetupScreen() {
       case 1:
         return renderHomeBaseStep();
       case 2:
-        return renderContactStep();
+        return renderZonesStep();
       case 3:
-        return renderExtrasStep();
+        return renderContactStep();
       case 4:
+        return renderExtrasStep();
+      case 5:
         return renderReviewStep();
       default:
         return null;

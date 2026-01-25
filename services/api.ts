@@ -242,7 +242,7 @@ interface ApiResult<T> {
  */
 async function callFunction<T>(
   functionName: string,
-  body: unknown
+  body: object
 ): Promise<ApiResult<T>> {
   try {
     console.log(`[API] Calling ${functionName}...`);
@@ -701,6 +701,7 @@ export interface GuestKit {
 export interface GuestKitItem {
   id: string;
   kit_id: string;
+  zone_id?: string; // Reference to zone for shared pathways
   item_type: string;
   custom_name?: string;
   hint?: string;
@@ -717,6 +718,65 @@ export interface GuestKitItem {
   created_at: string;
   updated_at: string;
 }
+
+// Zone image for 360° scan of a zone
+export interface ZoneImage {
+  url: string;
+  angle: 'front' | 'right' | 'back' | 'left';
+  description?: string;
+}
+
+// Pathway waypoint image
+export interface PathwayImage {
+  url: string;
+  sequence: number;
+  label: string; // "hallway", "top of stairs", "basement door"
+  description?: string;
+}
+
+// Zone types for quick selection
+export type ZoneType = 'basement' | 'garage' | 'utility_room' | 'laundry' | 'bedroom' | 'bathroom' | 'outdoor' | 'attic' | 'custom';
+
+export interface GuestKitZone {
+  id: string;
+  kit_id: string;
+  name: string;
+  zone_type: ZoneType;
+  icon_name?: string;
+
+  // Zone 360° scan
+  zone_images: ZoneImage[];
+  zone_scan_complete: boolean;
+  zone_description?: string;
+
+  // Pathway from kitchen to zone
+  pathway_images: PathwayImage[];
+  pathway_complete: boolean;
+  pathway_description?: string;
+
+  display_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+// Zone type definitions with icons
+export interface ZoneTypeDefinition {
+  name: string;
+  icon: string;
+  description: string;
+}
+
+export const ZONE_TYPES: Record<ZoneType, ZoneTypeDefinition> = {
+  basement: { name: 'Basement', icon: 'layers', description: 'Underground level' },
+  garage: { name: 'Garage', icon: 'car', description: 'Vehicle/storage area' },
+  utility_room: { name: 'Utility Room', icon: 'construct', description: 'HVAC, water heater' },
+  laundry: { name: 'Laundry Room', icon: 'shirt', description: 'Washer/dryer area' },
+  bedroom: { name: 'Bedroom', icon: 'bed', description: 'Bedroom area' },
+  bathroom: { name: 'Bathroom', icon: 'water', description: 'Bathroom area' },
+  outdoor: { name: 'Outdoor', icon: 'leaf', description: 'Yard, pool, shed' },
+  attic: { name: 'Attic', icon: 'home', description: 'Upper storage area' },
+  custom: { name: 'Custom', icon: 'location', description: 'Other area' },
+};
 
 export interface GuestKitItemType {
   name: string;
@@ -816,6 +876,56 @@ export async function deleteGuestKitItem(
  */
 export async function getGuestKitItemTypes(): Promise<ApiResult<{ itemTypes: Record<string, GuestKitItemType> }>> {
   return callFunction('guest-kit', { action: 'get-item-types' });
+}
+
+// ============================================
+// GUEST KIT ZONES API
+// ============================================
+
+/**
+ * Create a new zone for a guest kit
+ */
+export async function createGuestKitZone(
+  zone: Partial<GuestKitZone>
+): Promise<ApiResult<{ zone: GuestKitZone }>> {
+  return callFunction('guest-kit', { action: 'create-zone', zone });
+}
+
+/**
+ * Update a zone
+ */
+export async function updateGuestKitZone(
+  zoneId: string,
+  updates: Partial<GuestKitZone>
+): Promise<ApiResult<{ zone: GuestKitZone }>> {
+  return callFunction('guest-kit', { action: 'update-zone', zoneId, updates });
+}
+
+/**
+ * Delete a zone
+ */
+export async function deleteGuestKitZone(
+  zoneId: string
+): Promise<ApiResult<{ deleted: boolean }>> {
+  return callFunction('guest-kit', { action: 'delete-zone', zoneId });
+}
+
+/**
+ * Get all zones for a guest kit
+ */
+export async function getGuestKitZones(
+  kitId: string
+): Promise<ApiResult<{ zones: GuestKitZone[] }>> {
+  return callFunction('guest-kit', { action: 'list-zones', kitId });
+}
+
+/**
+ * Get a single zone with its items
+ */
+export async function getGuestKitZone(
+  zoneId: string
+): Promise<ApiResult<{ zone: GuestKitZone; items: GuestKitItem[] }>> {
+  return callFunction('guest-kit', { action: 'get-zone', zoneId });
 }
 
 // ============================================
@@ -929,6 +1039,10 @@ export type ItemPriority = 'critical' | 'normal' | 'optional';
 
 export interface InventoryItem {
   name: string;
+  genericName?: string;       // Generic item type (e.g., 'ketchup', 'greek yogurt')
+  brand?: string;             // Brand name (e.g., 'Heinz', 'Chobani')
+  size?: string;              // Package size (e.g., '32 oz', '1 gallon')
+  variety?: string;           // Variety/flavor (e.g., 'Honey Nut', '2% Reduced Fat')
   category: string;
   quantityLevel: QuantityLevel;
   quantityEstimate?: string;
@@ -939,11 +1053,16 @@ export interface InventoryItem {
 
 export interface ShoppingItem {
   itemName: string;
+  searchTerms?: string;       // Optimized search query for online shopping
+  genericAlternative?: string; // Generic version for budget shoppers
+  brand?: string;             // Preferred brand based on detected products
+  size?: string;              // Recommended size to purchase
   suggestedQuantity: string;
   category: string;
   priority: ItemPriority;
   reason?: string;
   storeSection?: string;
+  estimatedPrice?: string;    // Price estimate (e.g., '$3-5')
 }
 
 export interface InventoryScanResult {
@@ -1001,44 +1120,24 @@ export interface ShoppingListItem {
 // ============================================
 
 /**
- * Scan fridge/pantry/toolbox image to identify items and quantity levels
+ * Scan fridge/pantry/toolbox images to identify items and quantity levels
+ * Supports single image (string) or multiple images (string[])
  */
 export async function scanInventory(
-  imageBase64: string,
+  images: string | string[],
   scanType: ScanType = 'refrigerator',
   context?: string
 ): Promise<ApiResult<InventoryScanResult>> {
-  try {
-    const { data: sessionData } = await supabase.auth.getSession();
-    if (!sessionData?.session?.access_token) {
-      return { data: null, error: 'Not authenticated' };
-    }
+  // Support both single image (legacy) and array of images
+  const imageArray = Array.isArray(images) ? images : [images];
+  console.log('[scanInventory] Calling inventory-scan with', imageArray.length, 'image(s)');
 
-    // Access the URL from the supabase client
-    const supabaseUrl = (supabase as any).supabaseUrl || process.env.EXPO_PUBLIC_SUPABASE_URL;
-
-    const response = await fetch(
-      `${supabaseUrl}/functions/v1/inventory-scan`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${sessionData.session.access_token}`,
-        },
-        body: JSON.stringify({ imageBase64, scanType, context }),
-      }
-    );
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      return { data: null, error: errorData.error || `HTTP ${response.status}` };
-    }
-
-    const data = await response.json();
-    return { data, error: null };
-  } catch (error) {
-    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
-  }
+  // Use callFunction for consistent auth handling with other endpoints
+  return callFunction<InventoryScanResult>('inventory-scan', {
+    images: imageArray,
+    scanType,
+    context,
+  });
 }
 
 // ============================================
@@ -1264,6 +1363,31 @@ export async function deleteShoppingListItem(
     }
 
     return { data: true, error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Update a shopping list item (e.g., edit name, priority)
+ */
+export async function updateShoppingListItem(
+  itemId: string,
+  updates: { item_name?: string; priority?: ItemPriority; quantity?: string; notes?: string }
+): Promise<ApiResult<ShoppingListItem>> {
+  try {
+    const { data, error } = await supabase
+      .from('shopping_list_items')
+      .update(updates)
+      .eq('id', itemId)
+      .select()
+      .single();
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data, error: null };
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
   }

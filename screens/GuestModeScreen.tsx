@@ -332,6 +332,14 @@ export default function GuestModeScreen() {
         </View>
 
         <View style={styles.heroContent}>
+          {/* Back button */}
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}
+          >
+            <Ionicons name="arrow-back" size={24} color="#fff" />
+          </TouchableOpacity>
+
           <View style={styles.heroTitleRow}>
             <Ionicons name="people-outline" size={32} color="#fff" />
             <Text style={styles.heroTitle}>Guest Mode</Text>
@@ -418,6 +426,15 @@ const styles = StyleSheet.create({
   },
   heroContent: {
     zIndex: 1,
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
   },
   heroTitleRow: {
     flexDirection: 'row',

@@ -49,6 +49,7 @@ interface GuestKit {
 interface GuestKitItem {
   id?: string;
   kit_id: string;
+  zone_id?: string;
   item_type: string;
   custom_name?: string;
   hint?: string;
@@ -63,6 +64,47 @@ interface GuestKitItem {
   display_order?: number;
   icon_name?: string;
 }
+
+interface ZoneImage {
+  url: string;
+  angle: 'front' | 'right' | 'back' | 'left';
+  description?: string;
+}
+
+interface PathwayImage {
+  url: string;
+  sequence: number;
+  label: string;
+  description?: string;
+}
+
+interface GuestKitZone {
+  id?: string;
+  kit_id: string;
+  name: string;
+  zone_type: string;
+  icon_name?: string;
+  zone_images?: ZoneImage[];
+  zone_scan_complete?: boolean;
+  zone_description?: string;
+  pathway_images?: PathwayImage[];
+  pathway_complete?: boolean;
+  pathway_description?: string;
+  display_order?: number;
+}
+
+// Zone type icons mapping
+const ZONE_TYPE_ICONS: Record<string, string> = {
+  basement: 'layers',
+  garage: 'car',
+  utility_room: 'construct',
+  laundry: 'shirt',
+  bedroom: 'bed',
+  bathroom: 'water',
+  outdoor: 'leaf',
+  attic: 'home',
+  custom: 'location',
+};
 
 // Item type definitions with icons and default names
 const ITEM_TYPES = {
@@ -103,6 +145,35 @@ const ITEM_TYPES = {
   custom: { name: 'Custom Item', icon: 'location', priority: 'helpful', category: 'info' },
 };
 
+// Helper to ensure storage bucket exists
+async function ensureStorageBucket(supabase: any, bucketName: string): Promise<void> {
+  try {
+    // Check if bucket exists
+    const { data: buckets, error: listError } = await supabase.storage.listBuckets();
+    if (listError) {
+      console.error('Error listing buckets:', listError);
+      return;
+    }
+
+    const bucketExists = buckets?.some((b: any) => b.name === bucketName);
+    if (!bucketExists) {
+      console.log(`Creating storage bucket: ${bucketName}`);
+      const { error: createError } = await supabase.storage.createBucket(bucketName, {
+        public: true,
+        fileSizeLimit: 52428800, // 50MB
+        allowedMimeTypes: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+      });
+      if (createError && !createError.message?.includes('already exists')) {
+        console.error('Error creating bucket:', createError);
+      } else {
+        console.log(`Storage bucket '${bucketName}' created successfully`);
+      }
+    }
+  } catch (err) {
+    console.error('ensureStorageBucket error:', err);
+  }
+}
+
 Deno.serve(async (req) => {
   // Handle CORS preflight
   const corsResponse = handleCors(req);
@@ -122,10 +193,17 @@ Deno.serve(async (req) => {
     const body = await req.json();
     const { action } = body;
 
+    console.log(`[guest-kit] Action: ${action}, User: ${user.id}`);
+
     // Create Supabase client with service role for full access
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Ensure storage bucket exists for image-related actions
+    if (['create', 'update', 'add-item', 'update-item', 'create-zone', 'update-zone'].includes(action)) {
+      await ensureStorageBucket(supabase, 'images');
+    }
 
     switch (action) {
       // ============================================
@@ -135,18 +213,22 @@ Deno.serve(async (req) => {
       case 'create': {
         const { kit } = body as { kit: GuestKit };
 
+        console.log('[guest-kit] Creating new kit:', JSON.stringify(kit, null, 2).substring(0, 500));
+
         if (!kit.display_name) {
           return errorResponse('display_name is required', 400);
         }
 
         // Generate slug from display name
+        console.log('[guest-kit] Generating slug for:', kit.display_name);
         const { data: slugData, error: slugError } = await supabase
           .rpc('generate_guest_kit_slug', { base_name: kit.display_name });
 
         if (slugError) {
-          console.error('Slug generation error:', slugError);
-          return errorResponse('Failed to generate slug', 500);
+          console.error('[guest-kit] Slug generation error:', slugError);
+          return errorResponse(`Failed to generate slug: ${slugError.message}`, 500);
         }
+        console.log('[guest-kit] Generated slug:', slugData);
 
         const newKit = {
           user_id: user.id,
@@ -174,6 +256,7 @@ Deno.serve(async (req) => {
           house_rules: kit.house_rules || null,
         };
 
+        console.log('[guest-kit] Inserting kit into database...');
         const { data, error } = await supabase
           .from('guest_kits')
           .insert(newKit)
@@ -181,10 +264,12 @@ Deno.serve(async (req) => {
           .single();
 
         if (error) {
-          console.error('Create kit error:', error);
-          return errorResponse('Failed to create guest kit', 500);
+          console.error('[guest-kit] Create kit error:', error);
+          console.error('[guest-kit] Error details:', JSON.stringify(error, null, 2));
+          return errorResponse(`Failed to create guest kit: ${error.message}`, 500);
         }
 
+        console.log('[guest-kit] Kit created successfully:', data.id);
         return successResponse({ kit: data, itemTypes: ITEM_TYPES });
       }
 
@@ -445,6 +530,229 @@ Deno.serve(async (req) => {
 
       case 'get-item-types': {
         return successResponse({ itemTypes: ITEM_TYPES });
+      }
+
+      // ============================================
+      // ZONE OPERATIONS
+      // ============================================
+
+      case 'create-zone': {
+        const { zone } = body as { zone: GuestKitZone };
+
+        if (!zone.kit_id || !zone.name || !zone.zone_type) {
+          return errorResponse('kit_id, name, and zone_type are required', 400);
+        }
+
+        // Verify user owns this kit
+        const { data: kit, error: kitError } = await supabase
+          .from('guest_kits')
+          .select('id')
+          .eq('id', zone.kit_id)
+          .eq('user_id', user.id)
+          .single();
+
+        if (kitError || !kit) {
+          return errorResponse('Guest kit not found or unauthorized', 404);
+        }
+
+        // Get next display order
+        const { data: lastZone } = await supabase
+          .from('guest_kit_zones')
+          .select('display_order')
+          .eq('kit_id', zone.kit_id)
+          .order('display_order', { ascending: false })
+          .limit(1)
+          .single();
+
+        const newZone = {
+          kit_id: zone.kit_id,
+          name: zone.name,
+          zone_type: zone.zone_type,
+          icon_name: zone.icon_name || ZONE_TYPE_ICONS[zone.zone_type] || 'location',
+          zone_images: zone.zone_images || [],
+          zone_scan_complete: zone.zone_scan_complete || false,
+          zone_description: zone.zone_description || null,
+          pathway_images: zone.pathway_images || [],
+          pathway_complete: zone.pathway_complete || false,
+          pathway_description: zone.pathway_description || null,
+          display_order: zone.display_order ?? ((lastZone?.display_order || 0) + 1),
+        };
+
+        const { data, error } = await supabase
+          .from('guest_kit_zones')
+          .insert(newZone)
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Create zone error:', error);
+          return errorResponse('Failed to create zone', 500);
+        }
+
+        return successResponse({ zone: data });
+      }
+
+      case 'update-zone': {
+        const { zoneId, updates } = body as { zoneId: string; updates: Partial<GuestKitZone> };
+
+        if (!zoneId) {
+          return errorResponse('zoneId is required', 400);
+        }
+
+        // Verify user owns the kit that contains this zone
+        const { data: existingZone, error: zoneCheckError } = await supabase
+          .from('guest_kit_zones')
+          .select('kit_id')
+          .eq('id', zoneId)
+          .single();
+
+        if (zoneCheckError || !existingZone) {
+          return errorResponse('Zone not found', 404);
+        }
+
+        const { data: kit, error: kitError } = await supabase
+          .from('guest_kits')
+          .select('id')
+          .eq('id', existingZone.kit_id)
+          .eq('user_id', user.id)
+          .single();
+
+        if (kitError || !kit) {
+          return errorResponse('Unauthorized', 403);
+        }
+
+        // Remove fields that shouldn't be updated
+        delete (updates as any).id;
+        delete (updates as any).kit_id;
+
+        const { data, error } = await supabase
+          .from('guest_kit_zones')
+          .update(updates)
+          .eq('id', zoneId)
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Update zone error:', error);
+          return errorResponse('Failed to update zone', 500);
+        }
+
+        return successResponse({ zone: data });
+      }
+
+      case 'delete-zone': {
+        const { zoneId } = body as { zoneId: string };
+
+        if (!zoneId) {
+          return errorResponse('zoneId is required', 400);
+        }
+
+        // Verify user owns the kit
+        const { data: existingZone } = await supabase
+          .from('guest_kit_zones')
+          .select('kit_id')
+          .eq('id', zoneId)
+          .single();
+
+        if (!existingZone) {
+          return errorResponse('Zone not found', 404);
+        }
+
+        const { data: kit } = await supabase
+          .from('guest_kits')
+          .select('id')
+          .eq('id', existingZone.kit_id)
+          .eq('user_id', user.id)
+          .single();
+
+        if (!kit) {
+          return errorResponse('Unauthorized', 403);
+        }
+
+        // Delete the zone (items will have zone_id set to null due to ON DELETE SET NULL)
+        const { error } = await supabase
+          .from('guest_kit_zones')
+          .delete()
+          .eq('id', zoneId);
+
+        if (error) {
+          console.error('Delete zone error:', error);
+          return errorResponse('Failed to delete zone', 500);
+        }
+
+        return successResponse({ deleted: true });
+      }
+
+      case 'list-zones': {
+        const { kitId } = body as { kitId: string };
+
+        if (!kitId) {
+          return errorResponse('kitId is required', 400);
+        }
+
+        // Verify user owns this kit
+        const { data: kit, error: kitError } = await supabase
+          .from('guest_kits')
+          .select('id')
+          .eq('id', kitId)
+          .eq('user_id', user.id)
+          .single();
+
+        if (kitError || !kit) {
+          return errorResponse('Guest kit not found or unauthorized', 404);
+        }
+
+        const { data: zones, error } = await supabase
+          .from('guest_kit_zones')
+          .select('*')
+          .eq('kit_id', kitId)
+          .order('display_order', { ascending: true });
+
+        if (error) {
+          console.error('List zones error:', error);
+          return errorResponse('Failed to list zones', 500);
+        }
+
+        return successResponse({ zones: zones || [] });
+      }
+
+      case 'get-zone': {
+        const { zoneId } = body as { zoneId: string };
+
+        if (!zoneId) {
+          return errorResponse('zoneId is required', 400);
+        }
+
+        const { data: zone, error: zoneError } = await supabase
+          .from('guest_kit_zones')
+          .select('*')
+          .eq('id', zoneId)
+          .single();
+
+        if (zoneError || !zone) {
+          return errorResponse('Zone not found', 404);
+        }
+
+        // Verify user owns this kit
+        const { data: kit, error: kitError } = await supabase
+          .from('guest_kits')
+          .select('id')
+          .eq('id', zone.kit_id)
+          .eq('user_id', user.id)
+          .single();
+
+        if (kitError || !kit) {
+          return errorResponse('Unauthorized', 403);
+        }
+
+        // Get items in this zone
+        const { data: items } = await supabase
+          .from('guest_kit_items')
+          .select('*')
+          .eq('zone_id', zoneId)
+          .order('display_order', { ascending: true });
+
+        return successResponse({ zone, items: items || [] });
       }
 
       default:

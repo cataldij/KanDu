@@ -201,7 +201,7 @@ Deno.serve(async (req) => {
       }
 
       // ============================================
-      // AI SCAN NAVIGATION
+      // AI SCAN NAVIGATION (Zone-based)
       // ============================================
       case 'scan-navigate': {
         const { kitId, itemId, imageBase64, currentStep } = body as ScanRequest;
@@ -232,12 +232,16 @@ Deno.serve(async (req) => {
           return errorResponse('Item not found', 404);
         }
 
-        // Get waypoints for this item (if any)
-        const { data: waypoints } = await supabase
-          .from('guest_kit_waypoints')
-          .select('*')
-          .eq('item_id', itemId)
-          .order('sequence_order', { ascending: true });
+        // Get zone for this item (if assigned)
+        let zone = null;
+        if (item.zone_id) {
+          const { data: zoneData } = await supabase
+            .from('guest_kit_zones')
+            .select('*')
+            .eq('id', item.zone_id)
+            .single();
+          zone = zoneData;
+        }
 
         // Initialize Gemini
         const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
@@ -248,75 +252,99 @@ Deno.serve(async (req) => {
         const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
         const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
 
-        // Build the navigation prompt
+        // Build the navigation context
         const itemName = item.custom_name || getItemTypeName(item.item_type);
-        const routeDescription = item.route_description || 'Navigate from the kitchen to the destination.';
-        const totalSteps = (waypoints?.length || 0) + 2; // Start + waypoints + destination
-
-        // Build home base context from multi-angle images
         const homeBaseImages = kit.home_base_images || [];
-        const hasMultiAngleScan = homeBaseImages.length > 0;
+        const hasKitchenScan = homeBaseImages.length > 0;
 
-        // Build detailed spatial context from kitchen scan
-        let spatialContext = '';
-        if (hasMultiAngleScan) {
-          const angleDescriptions = homeBaseImages.map((img: { angle: string; description?: string }) => {
-            const angleName = img.angle === 'front' ? 'FRONT (main entrance view)' :
-                             img.angle === 'right' ? 'RIGHT (90° clockwise)' :
-                             img.angle === 'back' ? 'BACK (opposite entrance)' :
-                             img.angle === 'left' ? 'LEFT (90° counter-clockwise)' :
-                             img.angle === 'exit' ? 'EXIT (doorway leaving kitchen)' : img.angle;
-            return `  - ${angleName}: ${img.description || 'No description'}`;
-          }).join('\n');
+        // Zone-based navigation data
+        const pathwayImages = zone?.pathway_images || [];
+        const zoneImages = zone?.zone_images || [];
+        const hasPathway = pathwayImages.length > 0;
+        const hasZoneScan = zoneImages.length > 0;
 
-          spatialContext = `
-HOME BASE (Kitchen) - 360° SCAN AVAILABLE:
-The homeowner has provided a complete 360° scan of their kitchen with ${homeBaseImages.length} angles:
-${angleDescriptions}
+        // Calculate total steps: Kitchen + Pathway waypoints + Zone + Item destination
+        const totalSteps = 1 + pathwayImages.length + (hasZoneScan ? 1 : 0) + 1;
 
-Compare the guest's current view to these reference images to determine:
-1. If they are in the kitchen, which direction they are facing
-2. If they are outside the kitchen, which direction leads back to it
-3. The best exit to take based on the destination`;
+        // Build comprehensive navigation context
+        let routeContext = `
+NAVIGATION ROUTE:
+1. START: Kitchen (Home Base)`;
+
+        if (hasPathway) {
+          pathwayImages.forEach((wp: { sequence: number; label: string; description?: string }, i: number) => {
+            routeContext += `\n${i + 2}. WAYPOINT: ${wp.label}${wp.description ? ` - ${wp.description}` : ''}`;
+          });
         }
 
-        const prompt = `You are helping someone navigate through a home to find the ${itemName}.
+        if (zone) {
+          routeContext += `\n${pathwayImages.length + 2}. ZONE: ${zone.name}${zone.zone_description ? ` - ${zone.zone_description}` : ''}`;
+        }
 
-ROUTE CONTEXT:
-- Starting point: ${kit.home_base_description || 'Kitchen'}
-- Destination: ${itemName}
-- Route hints: ${routeDescription}
-- Item location hint: ${item.hint || 'Not specified'}
-${spatialContext}
+        routeContext += `\n${totalSteps}. DESTINATION: ${itemName}${item.hint ? ` - ${item.hint}` : ''}`;
+
+        // Build kitchen context
+        let kitchenContext = '';
+        if (hasKitchenScan) {
+          const angleDescriptions = homeBaseImages.map((img: { angle: string; description?: string }) => {
+            const angleName = img.angle === 'front' ? 'FRONT' :
+                             img.angle === 'right' ? 'RIGHT (90° CW)' :
+                             img.angle === 'back' ? 'BACK (180°)' :
+                             img.angle === 'left' ? 'LEFT (90° CCW)' :
+                             img.angle === 'exit' ? 'EXIT DOORWAY' : img.angle;
+            return `  - ${angleName}`;
+          }).join('\n');
+          kitchenContext = `\n\nKITCHEN (START POINT) - 360° Reference:\n${angleDescriptions}`;
+        }
+
+        // Build pathway context
+        let pathwayContext = '';
+        if (hasPathway) {
+          const waypointList = pathwayImages.map((wp: { sequence: number; label: string }) =>
+            `  ${wp.sequence}. ${wp.label}`
+          ).join('\n');
+          pathwayContext = `\n\nPATHWAY WAYPOINTS:\n${waypointList}`;
+        }
+
+        // Build zone context
+        let zoneContext = '';
+        if (zone && hasZoneScan) {
+          const zoneAngles = zoneImages.map((img: { angle: string }) => img.angle.toUpperCase()).join(', ');
+          zoneContext = `\n\n${zone.name.toUpperCase()} ZONE - 360° Reference:\nAngles available: ${zoneAngles}`;
+        }
+
+        const prompt = `You are an AI navigation assistant helping a guest find the ${itemName} in someone's home.
+${routeContext}${kitchenContext}${pathwayContext}${zoneContext}
 
 CURRENT STATUS:
-- Step ${currentStep || 1} of approximately ${totalSteps} steps
+- Navigation step ${currentStep || 1} of ${totalSteps}
+
+I'm providing reference images in this order:
+${hasKitchenScan ? '1. Kitchen 360° scan (5 angles)\n' : ''}${hasPathway ? `2. Pathway waypoints (${pathwayImages.length} images)\n` : ''}${hasZoneScan ? `3. ${zone?.name} zone 360° scan (4 angles)\n` : ''}4. Guest's current camera view (ANALYZE THIS)
 
 TASK:
-Look at the image the guest just captured with their camera. ${hasMultiAngleScan ? 'Compare it to the reference kitchen images I\'ve provided.' : ''}
-Determine:
-1. Where they are in the house relative to the route
-2. ${hasMultiAngleScan ? 'If in the kitchen, which angle/direction they are facing (front, right, back, left, or exit)' : 'Their approximate location'}
-3. What they should do next to get closer to the ${itemName}
-4. If they have arrived at the destination
+Analyze the guest's current camera view against the reference images to determine:
+1. WHERE they are on the route (kitchen, which waypoint, zone, or destination)
+2. Which direction they're facing (if identifiable)
+3. NEXT INSTRUCTION to move them forward on the route
+4. If they've ARRIVED at the ${itemName}
 
-Respond with JSON only (no markdown):
+Respond with JSON only:
 {
-  "location_identified": "kitchen" | "hallway" | "doorway" | "stairs" | "basement" | "utility_room" | "destination" | "unknown",
-  "facing_direction": "front" | "right" | "back" | "left" | "exit" | null,
+  "location_identified": "kitchen" | "waypoint_1" | "waypoint_2" | ... | "zone" | "destination" | "unknown",
+  "location_name": "Human-readable location name",
+  "facing_direction": "front" | "right" | "back" | "left" | null,
   "confidence": 0.0-1.0,
-  "next_instruction": "Clear instruction for the next step",
+  "route_progress": "on_track" | "ahead" | "behind" | "lost",
+  "next_instruction": "Clear, specific instruction for what to do next",
   "highlight": {
-    "description": "What to look for (e.g., 'white door on the right')"
+    "description": "What visual landmark to look for"
   },
   "warning": null or "Safety warning if applicable",
   "arrived": true/false,
   "step_number": ${currentStep || 1},
   "total_steps": ${totalSteps}
-}
-
-If they have arrived at the destination, set arrived=true and provide final approach instructions.
-If you're unsure of their location, ask them to turn around slowly or provide more context.`;
+}`;
 
         try {
           // Create image part from guest's current camera view
@@ -327,36 +355,58 @@ If you're unsure of their location, ask them to turn around slowly or provide mo
             },
           };
 
-          // Build content array with prompt, reference images, and guest's view
+          // Build content array with prompt and all reference images
           const contentParts: Array<string | { inlineData: { data: string; mimeType: string } }> = [prompt];
 
-          // Add reference images from 360° kitchen scan if available
-          if (hasMultiAngleScan) {
+          // Helper to add image from URL
+          const addImageFromUrl = async (url: string, label: string) => {
+            try {
+              const imgResponse = await fetch(url);
+              if (imgResponse.ok) {
+                const imgBuffer = await imgResponse.arrayBuffer();
+                const imgBase64 = btoa(String.fromCharCode(...new Uint8Array(imgBuffer)));
+                contentParts.push({
+                  inlineData: { data: imgBase64, mimeType: 'image/jpeg' },
+                });
+                contentParts.push(`[REFERENCE: ${label}]`);
+              }
+            } catch (e) {
+              console.log(`Could not fetch image: ${label}`, e);
+            }
+          };
+
+          // 1. Add kitchen reference images
+          if (hasKitchenScan) {
+            contentParts.push('\n--- KITCHEN (START) REFERENCE IMAGES ---');
             for (const img of homeBaseImages) {
               if (img.url) {
-                try {
-                  // Fetch the reference image and convert to base64
-                  const imgResponse = await fetch(img.url);
-                  if (imgResponse.ok) {
-                    const imgBuffer = await imgResponse.arrayBuffer();
-                    const imgBase64 = btoa(String.fromCharCode(...new Uint8Array(imgBuffer)));
-                    contentParts.push({
-                      inlineData: {
-                        data: imgBase64,
-                        mimeType: 'image/jpeg',
-                      },
-                    });
-                    contentParts.push(`[REFERENCE: Kitchen ${img.angle.toUpperCase()} view]`);
-                  }
-                } catch (imgErr) {
-                  console.log(`Could not fetch reference image for ${img.angle}:`, imgErr);
-                }
+                await addImageFromUrl(img.url, `Kitchen ${img.angle.toUpperCase()}`);
               }
             }
           }
 
-          // Add the guest's current view last
-          contentParts.push('[GUEST\'S CURRENT VIEW - analyze this against the reference images]:');
+          // 2. Add pathway waypoint images
+          if (hasPathway) {
+            contentParts.push('\n--- PATHWAY WAYPOINT IMAGES ---');
+            for (const wp of pathwayImages) {
+              if (wp.url) {
+                await addImageFromUrl(wp.url, `Waypoint ${wp.sequence}: ${wp.label}`);
+              }
+            }
+          }
+
+          // 3. Add zone reference images
+          if (zone && hasZoneScan) {
+            contentParts.push(`\n--- ${zone.name.toUpperCase()} ZONE REFERENCE IMAGES ---`);
+            for (const img of zoneImages) {
+              if (img.url) {
+                await addImageFromUrl(img.url, `${zone.name} ${img.angle.toUpperCase()}`);
+              }
+            }
+          }
+
+          // 4. Add guest's current view (most important - last)
+          contentParts.push('\n--- GUEST\'S CURRENT CAMERA VIEW (ANALYZE THIS) ---');
           contentParts.push(guestImagePart);
 
           const result = await model.generateContent(contentParts);
@@ -374,7 +424,7 @@ If you're unsure of their location, ask them to turn around slowly or provide mo
           // If arrived, include the item's instructions
           if (navigationResponse.arrived) {
             navigationResponse.next_instruction = item.instructions ||
-              `You've found the ${itemName}. ${item.hint || ''}`;
+              `You've found the ${itemName}! ${item.hint || ''}`;
           }
 
           // Log the scan
@@ -402,6 +452,10 @@ If you're unsure of their location, ask them to turn around slowly or provide mo
               destination_image_url: item.destination_image_url,
               control_image_url: item.control_image_url,
             },
+            zone: zone ? {
+              name: zone.name,
+              zone_type: zone.zone_type,
+            } : null,
           });
         } catch (aiError) {
           console.error('AI navigation error:', aiError);
@@ -411,7 +465,7 @@ If you're unsure of their location, ask them to turn around slowly or provide mo
             navigation: {
               location_identified: 'unknown',
               confidence: 0,
-              next_instruction: `I couldn't identify your location clearly. Try pointing your camera at a doorway or landmark. You're looking for the ${itemName}. ${item.hint || ''}`,
+              next_instruction: `I couldn't identify your location clearly. Try pointing your camera at a doorway or landmark. You're looking for the ${itemName}${zone ? ` in the ${zone.name}` : ''}. ${item.hint || ''}`,
               arrived: false,
               step_number: currentStep || 1,
               total_steps: totalSteps,

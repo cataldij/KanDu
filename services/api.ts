@@ -1668,6 +1668,66 @@ export interface CookingHistory {
   created_at: string;
 }
 
+// Recipe suggestion from AI
+export interface RecipeSuggestion {
+  name: string;
+  emoji?: string;
+  description?: string;
+  prepTime: number; // minutes
+  cookTime: number; // minutes
+  difficulty: 'Easy' | 'Medium' | 'Hard';
+  servings: number;
+  cuisine?: string;
+  ingredients: Array<{
+    name: string;
+    quantity: string;
+    unit: string;
+  }>;
+  steps: Array<{
+    stepNumber: number;
+    instruction: string;
+    duration?: number; // minutes
+    tip?: string;
+  }>;
+}
+
+// ============================================
+// RECIPE SUGGESTION (AI-POWERED)
+// ============================================
+
+/**
+ * Get AI-powered recipe suggestions based on user preferences
+ */
+export async function suggestRecipes(params: {
+  mealType: string;
+  servings: string;
+  energy: string;
+  mood?: string;
+  cuisine?: string;
+  specificDish?: string;
+  surprise?: boolean;
+}): Promise<ApiResult<RecipeSuggestion[]>> {
+  try {
+    const { data, error } = await supabase.functions.invoke('suggest-recipes', {
+      body: params,
+    });
+
+    if (error) {
+      console.error('[API] Recipe suggestion error:', error);
+      return { data: null, error: error.message };
+    }
+
+    if (!data?.recipes || !Array.isArray(data.recipes)) {
+      return { data: null, error: 'Invalid response from recipe suggestion' };
+    }
+
+    return { data: data.recipes, error: null };
+  } catch (error) {
+    console.error('[API] Recipe suggestion exception:', error);
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
 // ============================================
 // RECIPE TRACKING FUNCTIONS
 // ============================================

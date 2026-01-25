@@ -42,7 +42,9 @@ import FavoriteButton from '../components/FavoriteButton';
 import AnimatedAnnotation, { Annotation, AnnotationType, AnnotationColor } from '../components/AnimatedAnnotation';
 import SpotCheckScanner from '../components/SpotCheckScanner';
 import CookingSession from '../components/CookingSession';
+import RecipeDiscovery from '../components/RecipeDiscovery';
 import { supabase } from '../services/supabase';
+import { createShoppingList, addShoppingListItem, RecipeSuggestion } from '../services/api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -244,6 +246,7 @@ export default function DoItScreen() {
   const [spotCheckQuestion, setSpotCheckQuestion] = useState<string>('');
   const [showSpotCheckScanner, setShowSpotCheckScanner] = useState(false);
   const [showCookingSession, setShowCookingSession] = useState(false);
+  const [showRecipeDiscovery, setShowRecipeDiscovery] = useState(false);
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -1463,6 +1466,74 @@ RULES:
       setFlowState('capture');
       // Show media options immediately
       setTimeout(() => setShowMediaOptions(true), 300);
+    }
+  };
+
+  // Handle starting to cook from RecipeDiscovery
+  const handleStartCookingFromDiscovery = (recipe: RecipeSuggestion) => {
+    // Convert RecipeSuggestion to RecipeOption format
+    const recipeOption: RecipeOption = {
+      id: `discovery-${Date.now()}`,
+      name: recipe.name,
+      tagline: recipe.description || `${recipe.cuisine || ''} ${recipe.difficulty} recipe`,
+      time: `${recipe.prepTime + recipe.cookTime} min`,
+      difficulty: recipe.difficulty === 'Hard' ? 'Moderate' : recipe.difficulty,
+      ingredients: recipe.ingredients.map(ing => `${ing.quantity} ${ing.unit} ${ing.name}`),
+      steps: recipe.steps.map(step => step.instruction),
+      tips: recipe.steps.find(s => s.tip)?.tip,
+      icon: recipe.emoji || '🍽️',
+    };
+
+    setSelectedRecipe(recipeOption);
+    setShowRecipeDiscovery(false);
+    setShowCookingSession(true);
+  };
+
+  // Handle adding missing ingredients to shopping list from RecipeDiscovery
+  const handleAddToShoppingListFromDiscovery = async (recipe: RecipeSuggestion, missingIngredients: string[]) => {
+    try {
+      // Create a new shopping list for this recipe
+      const listResult = await createShoppingList(
+        `${recipe.name} - Ingredients`,
+        'grocery',
+        'recipe',
+        recipe.name
+      );
+
+      if (listResult.error || !listResult.data) {
+        Alert.alert('Error', listResult.error || 'Failed to create shopping list');
+        return;
+      }
+
+      // Add each missing ingredient
+      for (const ingredientName of missingIngredients) {
+        const ingredient = recipe.ingredients.find(i => i.name === ingredientName);
+        if (ingredient) {
+          await addShoppingListItem(listResult.data.id, {
+            item_name: ingredient.name,
+            quantity: ingredient.quantity,
+            unit: ingredient.unit,
+            category: 'grocery',
+            priority: 'normal',
+            notes: `For: ${recipe.name}`,
+          });
+        }
+      }
+
+      Alert.alert(
+        'Added to Shopping List! 🛒',
+        `${missingIngredients.length} items added to "${recipe.name} - Ingredients"`,
+        [
+          { text: 'Keep Browsing', style: 'cancel' },
+          {
+            text: "Let's Cook!",
+            onPress: () => handleStartCookingFromDiscovery(recipe),
+          },
+        ]
+      );
+    } catch (error) {
+      console.error('[DoIt] Error adding to shopping list:', error);
+      Alert.alert('Error', 'Failed to add items to shopping list');
     }
   };
 
@@ -3072,35 +3143,93 @@ Previous recommendation was about: ${recommendation?.substring(0, 100) || 'a tas
               )}
             </ScrollView>
 
-            {/* Continue Button */}
-            <TouchableOpacity
-              style={[
-                styles.contextContinueButton,
-                !canProceed && styles.contextContinueButtonDisabled,
-              ]}
-              onPress={() => {
-                if (canProceed) {
-                  handleEnergySelect(selectedEnergy!);
-                }
-              }}
-              disabled={!canProceed}
-              activeOpacity={0.8}
-            >
-              <LinearGradient
-                colors={canProceed
-                  ? (pendingIntent?.gradient || ['#FF6B35', '#FF8C42'])
-                  : ['#94a3b8', '#94a3b8']
-                }
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.contextContinueGradient}
+            {/* Action Buttons */}
+            {isCooking ? (
+              // Two options for cooking: Scan or Help me decide
+              <View style={styles.cookingActionButtons}>
+                <TouchableOpacity
+                  style={[
+                    styles.cookingActionButton,
+                    !canProceed && styles.cookingActionButtonDisabled,
+                  ]}
+                  onPress={() => {
+                    if (canProceed) {
+                      handleEnergySelect(selectedEnergy!);
+                    }
+                  }}
+                  disabled={!canProceed}
+                  activeOpacity={0.8}
+                >
+                  <LinearGradient
+                    colors={canProceed ? ['#10b981', '#059669'] : ['#94a3b8', '#94a3b8']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.cookingActionGradient}
+                  >
+                    <Ionicons name="camera" size={28} color="#fff" />
+                    <Text style={styles.cookingActionTitle}>Scan my kitchen</Text>
+                    <Text style={styles.cookingActionSubtext}>See what you have</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.cookingActionButton,
+                    !canProceed && styles.cookingActionButtonDisabled,
+                  ]}
+                  onPress={() => {
+                    if (canProceed) {
+                      setShowContextPicker(false);
+                      if (pendingIntent) {
+                        setActiveIntent(pendingIntent);
+                      }
+                      setShowRecipeDiscovery(true);
+                    }
+                  }}
+                  disabled={!canProceed}
+                  activeOpacity={0.8}
+                >
+                  <LinearGradient
+                    colors={canProceed ? ['#f59e0b', '#d97706'] : ['#94a3b8', '#94a3b8']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                    style={styles.cookingActionGradient}
+                  >
+                    <Ionicons name="sparkles" size={28} color="#fff" />
+                    <Text style={styles.cookingActionTitle}>Help me decide</Text>
+                    <Text style={styles.cookingActionSubtext}>Get recipe ideas</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              // Single continue button for non-cooking intents
+              <TouchableOpacity
+                style={[
+                  styles.contextContinueButton,
+                  !canProceed && styles.contextContinueButtonDisabled,
+                ]}
+                onPress={() => {
+                  if (canProceed) {
+                    handleEnergySelect(selectedEnergy!);
+                  }
+                }}
+                disabled={!canProceed}
+                activeOpacity={0.8}
               >
-                <Text style={styles.contextContinueText}>
-                  {isCooking ? 'Scan my kitchen' : 'Continue'}
-                </Text>
-                <Ionicons name="arrow-forward" size={20} color="#fff" />
-              </LinearGradient>
-            </TouchableOpacity>
+                <LinearGradient
+                  colors={canProceed
+                    ? (pendingIntent?.gradient || ['#FF6B35', '#FF8C42'])
+                    : ['#94a3b8', '#94a3b8']
+                  }
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.contextContinueGradient}
+                >
+                  <Text style={styles.contextContinueText}>Continue</Text>
+                  <Ionicons name="arrow-forward" size={20} color="#fff" />
+                </LinearGradient>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </Modal>
@@ -3188,6 +3317,24 @@ Previous recommendation was about: ${recommendation?.substring(0, 100) || 'a tas
             }}
           />
         )}
+      </Modal>
+
+      {/* Recipe Discovery Modal - help me decide what to cook */}
+      <Modal
+        visible={showRecipeDiscovery}
+        animationType="slide"
+        presentationStyle="fullScreen"
+        onRequestClose={() => setShowRecipeDiscovery(false)}
+      >
+        <RecipeDiscovery
+          mealType={selectedMealType || 'dinner'}
+          servings={selectedServings || '2'}
+          energy={selectedEnergy || 'invested'}
+          accentColor={activeIntent?.gradient[0] || '#f59e0b'}
+          onClose={() => setShowRecipeDiscovery(false)}
+          onStartCooking={handleStartCookingFromDiscovery}
+          onAddToShoppingList={handleAddToShoppingListFromDiscovery}
+        />
       </Modal>
     </KeyboardAvoidingView>
   );
@@ -4017,6 +4164,41 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '600',
     color: '#ffffff',
+  },
+
+  // Cooking action buttons (two-button choice)
+  cookingActionButtons: {
+    flexDirection: 'row',
+    marginHorizontal: 20,
+    marginTop: 16,
+    marginBottom: 32,
+    gap: 12,
+  },
+  cookingActionButton: {
+    flex: 1,
+    borderRadius: 16,
+    overflow: 'hidden',
+  },
+  cookingActionButtonDisabled: {
+    opacity: 0.5,
+  },
+  cookingActionGradient: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+    paddingHorizontal: 12,
+    gap: 6,
+  },
+  cookingActionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#ffffff',
+    textAlign: 'center',
+  },
+  cookingActionSubtext: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.8)',
+    textAlign: 'center',
   },
 
   // Messages

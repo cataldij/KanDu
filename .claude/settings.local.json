@@ -69,7 +69,12 @@
       "Bash(supabase migration:*)",
       "Bash(supabase status:*)",
       "Bash(supabase projects api-keys:*)",
-      "Bash(git init:*)"
+      "Bash(git init:*)",
+      "Bash(npm run dev:*)",
+      "Bash(gh repo create:*)",
+      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" auth status)",
+      "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" auth refresh -h github.com -s workflow)",
+      "Bash(node scripts/run-migration.js:*)"
     ],
     "additionalDirectories": [
       "c:\\Users\\socce\\OneDrive\\Documents\\kandu-fresh\\screens"

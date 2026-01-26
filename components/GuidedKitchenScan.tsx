@@ -29,6 +29,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path, Circle, G } from 'react-native-svg';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { supabase } from '../services/supabase';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
@@ -136,13 +137,22 @@ export default function GuidedKitchenScan({
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const rotateAnim = useRef(new Animated.Value(0)).current;
 
-  // Upload image to Supabase storage
+  // Upload image to Supabase storage (with resize for smaller files)
   const uploadImageToStorage = async (localUri: string, angle: string): Promise<string | null> => {
     try {
       console.log(`[KitchenScan] Processing ${angle} image...`);
 
-      // Fetch the image file directly (no resize - expo-image-manipulator not in this build)
-      const response = await fetch(localUri);
+      // Resize image to 800px width - keeps files small (~100-200KB vs 2-4MB)
+      const resized = await ImageManipulator.manipulateAsync(
+        localUri,
+        [{ resize: { width: 800 } }],
+        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+      );
+
+      console.log(`[KitchenScan] Resized to 800px width: ${resized.uri}`);
+
+      // Fetch the resized file
+      const response = await fetch(resized.uri);
       const blob = await response.blob();
 
       // Convert blob to ArrayBuffer (React Native fix)

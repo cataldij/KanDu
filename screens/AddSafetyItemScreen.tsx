@@ -279,15 +279,32 @@ export default function AddSafetyItemScreen() {
   const uploadImage = async (uri: string, field: 'overview_image_url' | 'destination_image_url' | 'control_image_url') => {
     setUploadingImage(field);
     try {
+      // React Native blob upload fix: read as base64 and convert to ArrayBuffer
       const response = await fetch(uri);
       const blob = await response.blob();
+
+      // Convert blob to ArrayBuffer via FileReader
+      const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (reader.result instanceof ArrayBuffer) {
+            resolve(reader.result);
+          } else {
+            reject(new Error('Failed to read blob as ArrayBuffer'));
+          }
+        };
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(blob);
+      });
 
       const fileName = `item-${field}-${Date.now()}.jpg`;
       const filePath = `guest-kits/${fileName}`;
 
+      console.log(`[Upload] Uploading ${filePath}, size: ${arrayBuffer.byteLength} bytes`);
+
       const { error: uploadError } = await supabase.storage
         .from('images')
-        .upload(filePath, blob, {
+        .upload(filePath, arrayBuffer, {
           contentType: 'image/jpeg',
           upsert: true,
         });
@@ -300,6 +317,7 @@ export default function AddSafetyItemScreen() {
         .from('images')
         .getPublicUrl(filePath);
 
+      console.log(`[Upload] Success! URL: ${urlData.publicUrl}`);
       updateData(field, urlData.publicUrl);
     } catch (err) {
       console.error('Upload error:', err);

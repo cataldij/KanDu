@@ -277,27 +277,30 @@ export default function App() {
   // Show cinematic splash on cold start
   const [showSplash, setShowSplash] = useState(true);
 
-  // OTA updates temporarily disabled - causing crash loop
-  // Will re-enable after new native build
-  // useEffect(() => {
-  //   async function checkForUpdates() {
-  //     try {
-  //       console.log('[Updates] Checking for updates...');
-  //       const update = await Updates.checkForUpdateAsync();
-  //       if (update.isAvailable) {
-  //         console.log('[Updates] New update available, downloading...');
-  //         await Updates.fetchUpdateAsync();
-  //         console.log('[Updates] Update downloaded, reloading...');
-  //         await Updates.reloadAsync();
-  //       } else {
-  //         console.log('[Updates] App is up to date');
-  //       }
-  //     } catch (error) {
-  //       console.log('[Updates] Error checking for updates:', error);
-  //     }
-  //   }
-  //   checkForUpdates();
-  // }, []);
+  // Check for OTA updates on app launch
+  useEffect(() => {
+    async function checkForUpdates() {
+      try {
+        // Check for updates in both dev and production
+        console.log('[Updates] Checking for updates...');
+        const update = await Updates.checkForUpdateAsync();
+
+        if (update.isAvailable) {
+          console.log('[Updates] New update available, downloading...');
+          await Updates.fetchUpdateAsync();
+          console.log('[Updates] Update downloaded, reloading...');
+          await Updates.reloadAsync();
+        } else {
+          console.log('[Updates] App is up to date');
+        }
+      } catch (error) {
+        // Don't crash the app if update check fails
+        console.log('[Updates] Error checking for updates:', error);
+      }
+    }
+
+    checkForUpdates();
+  }, []);
 
   const handleSplashComplete = () => {
     setShowSplash(false);

@@ -55,12 +55,15 @@ import {
   InventoryItem,
   SortedItem,
 } from '../services/api';
+import { supabase } from '../services/supabase';
 import AnimatedLogo from '../components/AnimatedLogo';
 import ShoppingListSectionHeader from '../components/ShoppingListSectionHeader';
 import ItemQuantityStepper from '../components/ItemQuantityStepper';
 import ShoppingListBudgetCard from '../components/ShoppingListBudgetCard';
 import QuickAddBar from '../components/QuickAddBar';
 import ArchivedListsModal from '../components/ArchivedListsModal';
+// BarcodeScanner temporarily removed - requires native build
+// import BarcodeScanner from '../components/BarcodeScanner';
 
 // Speech recognition (optional - requires dev build)
 let ExpoSpeechRecognitionModule: any = null;
@@ -200,6 +203,19 @@ export default function ShoppingListScreen() {
   const [archivedLists, setArchivedLists] = useState<ShoppingList[]>([]);
   const [loadingArchived, setLoadingArchived] = useState(false);
 
+  // Phase 2: Shopping Mode (large UI for in-store use)
+  const [shoppingMode, setShoppingMode] = useState(false);
+
+  // Phase 2: Smart Suggestions (autocomplete as user types)
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
+  // Phase 3A: Barcode Scanner
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
+
+  // Phase 3B: Drag to Reorder
+  const [reorderMode, setReorderMode] = useState(false);
+
   // Scan state - now supports multiple images
   const [capturedImages, setCapturedImages] = useState<string[]>([]);
   const [scanResult, setScanResult] = useState<InventoryScanResult | null>(null);
@@ -241,6 +257,20 @@ export default function ShoppingListScreen() {
       }
     }, [route.params?.listId, lists])
   );
+
+  // Phase 2: Debounced smart suggestions
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (newItemName && addingItem) {
+        fetchSuggestions(newItemName);
+      } else {
+        setSuggestions([]);
+        setShowSuggestions(false);
+      }
+    }, 300); // 300ms debounce
+
+    return () => clearTimeout(timer);
+  }, [newItemName, addingItem, items]);
 
   const loadLists = async () => {
     setLoading(true);
@@ -325,6 +355,20 @@ export default function ShoppingListScreen() {
         )
       );
     }
+  };
+
+  // Normal Mode: Toggle selection for Instacart (no database update)
+  const handleToggleSelection = (itemId: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSelectedForInstacart(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(itemId)) {
+        newSet.delete(itemId);
+      } else {
+        newSet.add(itemId);
+      }
+      return newSet;
+    });
   };
 
   const handleDeleteItem = async (item: ShoppingListItem) => {
@@ -616,19 +660,29 @@ export default function ShoppingListScreen() {
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
-    // Get unchecked items (items still needed)
-    const uncheckedItems = items.filter(i => !i.is_checked);
-    console.log('[ShoppingList] Unchecked items:', uncheckedItems.length);
+    // If user has manually selected items, use those
+    // Otherwise, default to all items not marked "got it" in Shopping Mode
+    let itemsToOrder: Set<string>;
 
-    if (uncheckedItems.length === 0) {
-      Alert.alert('All items checked!', 'All items are already checked off. Add more items to shop on Instacart.');
-      return;
+    if (selectedForInstacart.size > 0) {
+      // User explicitly selected items in Normal Mode
+      itemsToOrder = selectedForInstacart;
+      console.log('[ShoppingList] Using manually selected items:', itemsToOrder.size);
+    } else {
+      // Auto-select items not yet marked as "got it"
+      const availableItems = items.filter(i => !i.is_checked);
+      console.log('[ShoppingList] Auto-selecting unchecked items:', availableItems.length);
+
+      if (availableItems.length === 0) {
+        Alert.alert('All items purchased', 'All items have been marked as purchased. Uncheck items or add new ones to shop on Instacart.');
+        return;
+      }
+
+      itemsToOrder = new Set(availableItems.map(i => i.id));
+      setSelectedForInstacart(itemsToOrder);
     }
 
-    // Pre-select all unchecked items
-    const itemIds = new Set(uncheckedItems.map(i => i.id));
-    setSelectedForInstacart(itemIds);
-    console.log('[ShoppingList] Opening Instacart modal with items:', itemIds.size);
+    console.log('[ShoppingList] Opening Instacart modal with items:', itemsToOrder.size);
     setShowInstacartModal(true);
   };
 
@@ -1022,6 +1076,165 @@ export default function ShoppingListScreen() {
         prev.map(i => (i.id === item.id ? { ...i, quantity: item.quantity } : i))
       );
       Alert.alert('Error', result.error);
+    }
+  };
+
+  // Phase 2: Smart Suggestions - fetch item suggestions as user types
+  const fetchSuggestions = async (input: string) => {
+    const trimmed = input.trim();
+
+    // Don't show suggestions for very short input
+    if (trimmed.length < 2) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    try {
+      // Query for previously used items that match the input
+      const { data, error } = await supabase
+        .from('shopping_list_items')
+        .select('item_name')
+        .ilike('item_name', `%${trimmed}%`)
+        .limit(10);
+
+      if (error) throw error;
+
+      // Get unique item names
+      const uniqueNames = Array.from(new Set(data?.map(item => item.item_name) || []));
+
+      // Filter out items already in current list
+      const currentItemNames = new Set(items.map(i => i.item_name.toLowerCase()));
+      const filteredSuggestions = uniqueNames.filter(
+        name => !currentItemNames.has(name.toLowerCase())
+      );
+
+      setSuggestions(filteredSuggestions);
+      setShowSuggestions(filteredSuggestions.length > 0);
+    } catch (error) {
+      console.error('[SmartSuggestions] Error fetching suggestions:', error);
+      setSuggestions([]);
+      setShowSuggestions(false);
+    }
+  };
+
+  // Handle selecting a suggestion
+  const handleSelectSuggestion = (suggestion: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setNewItemName(suggestion);
+    setSuggestions([]);
+    setShowSuggestions(false);
+  };
+
+  // Phase 3B: Drag to Reorder - move item up or down
+  const handleMoveItem = async (item: ShoppingListItem, direction: 'up' | 'down') => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    const sortedItems = [...items].sort((a, b) => a.display_order - b.display_order);
+    const currentIndex = sortedItems.findIndex(i => i.id === item.id);
+
+    if (direction === 'up' && currentIndex === 0) return; // Already at top
+    if (direction === 'down' && currentIndex === sortedItems.length - 1) return; // Already at bottom
+
+    const targetIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+    const targetItem = sortedItems[targetIndex];
+
+    // Swap display_order values
+    const tempOrder = item.display_order;
+    const newItemOrder = targetItem.display_order;
+    const newTargetOrder = tempOrder;
+
+    // Optimistic update
+    setItems(prev =>
+      prev.map(i => {
+        if (i.id === item.id) return { ...i, display_order: newItemOrder };
+        if (i.id === targetItem.id) return { ...i, display_order: newTargetOrder };
+        return i;
+      })
+    );
+
+    // Update database
+    try {
+      await Promise.all([
+        updateShoppingListItem(item.id, { display_order: newItemOrder }),
+        updateShoppingListItem(targetItem.id, { display_order: newTargetOrder }),
+      ]);
+    } catch (error) {
+      console.error('[Reorder] Failed to update display order:', error);
+      // Rollback
+      setItems(prev =>
+        prev.map(i => {
+          if (i.id === item.id) return { ...i, display_order: tempOrder };
+          if (i.id === targetItem.id) return { ...i, display_order: targetItem.display_order };
+          return i;
+        })
+      );
+      Alert.alert('Error', 'Failed to reorder items');
+    }
+  };
+
+  // Phase 3A: Barcode Scanner - handle barcode scanned
+  const handleBarcodeScanned = async (barcode: string) => {
+    if (!selectedList) return;
+
+    console.log('[BarcodeScanner] Scanned barcode:', barcode);
+
+    try {
+      // Check if this barcode matches any items in the current list
+      const matchingItem = items.find(item => item.barcode === barcode);
+
+      if (matchingItem) {
+        // Item found! Mark as checked (got it)
+        await handleToggleItem(matchingItem);
+        Alert.alert('Item Found!', `Checked off: ${matchingItem.item_name}`);
+      } else {
+        // Barcode not in list - check if we've seen it before
+        const { data, error } = await supabase
+          .from('shopping_list_items')
+          .select('item_name')
+          .eq('barcode', barcode)
+          .limit(1);
+
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          // We've seen this barcode before - suggest adding it
+          Alert.alert(
+            'Item Not In List',
+            `This looks like "${data[0].item_name}". Would you like to add it to your list?`,
+            [
+              { text: 'No', style: 'cancel' },
+              {
+                text: 'Add',
+                onPress: async () => {
+                  setNewItemName(data[0].item_name);
+                  setShowBarcodeScanner(false);
+                  setAddingItem(true);
+                },
+              },
+            ]
+          );
+        } else {
+          // Never seen this barcode - let user name it
+          Alert.alert(
+            'Unknown Barcode',
+            'This barcode is not in your list. Would you like to add a new item with this barcode?',
+            [
+              { text: 'No', style: 'cancel' },
+              {
+                text: 'Add Item',
+                onPress: () => {
+                  setShowBarcodeScanner(false);
+                  setAddingItem(true);
+                },
+              },
+            ]
+          );
+        }
+      }
+    } catch (error) {
+      console.error('[BarcodeScanner] Error processing barcode:', error);
+      Alert.alert('Error', 'Failed to process barcode');
     }
   };
 
@@ -1620,6 +1833,55 @@ export default function ShoppingListScreen() {
             </View>
 
             <View style={styles.heroActions}>
+              {/* Shopping Mode Toggle (Phase 2) */}
+              <TouchableOpacity
+                style={[styles.heroAction, shoppingMode && styles.heroActionActive]}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  setShoppingMode(!shoppingMode);
+                }}
+                activeOpacity={0.7}
+              >
+                <Ionicons
+                  name={shoppingMode ? "cart" : "cart-outline"}
+                  size={22}
+                  color={shoppingMode ? "#10B981" : "#ffffff"}
+                />
+              </TouchableOpacity>
+
+              {/* Barcode Scanner Button (Phase 3A) - temporarily disabled - requires native build
+              {shoppingMode && (
+                <TouchableOpacity
+                  style={styles.heroAction}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    setShowBarcodeScanner(true);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="barcode-outline" size={22} color="#ffffff" />
+                </TouchableOpacity>
+              )}
+              */}
+
+              {/* Reorder Mode Toggle (Phase 3B) - only when NOT smart-sorted */}
+              {!isSorted && !shoppingMode && (
+                <TouchableOpacity
+                  style={[styles.heroAction, reorderMode && styles.heroActionActive]}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    setReorderMode(!reorderMode);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons
+                    name={reorderMode ? "reorder-four" : "reorder-four-outline"}
+                    size={22}
+                    color={reorderMode ? "#10B981" : "#ffffff"}
+                  />
+                </TouchableOpacity>
+              )}
+
               <TouchableOpacity
                 style={styles.heroAction}
                 onPress={handleShareList}
@@ -1724,8 +1986,24 @@ export default function ShoppingListScreen() {
               </View>
             )}
 
-            {/* Shop on Instacart button */}
-            {items.filter(i => !i.is_checked).length > 0 && (
+            {/* Reorder Mode Banner (Phase 3B) */}
+            {reorderMode && (
+              <View style={styles.reorderBanner}>
+                <Ionicons name="reorder-four" size={16} color="#3B82F6" />
+                <Text style={styles.reorderBannerText}>
+                  Use arrows to reorder items
+                </Text>
+                <TouchableOpacity
+                  onPress={() => setReorderMode(false)}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                  <Ionicons name="close-circle" size={16} color="#3B82F6" />
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Shop on Instacart button - always visible when there are items */}
+            {items.length > 0 && (
               <TouchableOpacity
                 style={styles.instacartButton}
                 onPress={handleShopOnInstacart}
@@ -1738,7 +2016,11 @@ export default function ShoppingListScreen() {
                   style={styles.instacartGradient}
                 >
                   <Ionicons name="cart" size={20} color="#ffffff" />
-                  <Text style={styles.instacartButtonText}>Shop on Instacart</Text>
+                  <Text style={styles.instacartButtonText}>
+                    {selectedForInstacart.size > 0
+                      ? `Shop on Instacart (${selectedForInstacart.size})`
+                      : 'Shop on Instacart'}
+                  </Text>
                   <Ionicons name="arrow-forward" size={18} color="#ffffff" />
                 </LinearGradient>
               </TouchableOpacity>
@@ -1773,7 +2055,9 @@ export default function ShoppingListScreen() {
                           onToggle={() => toggleSection(section)}
                         />
 
-                        {isExpanded && sectionItems.map(item => (
+                        {isExpanded && sectionItems
+                          .filter(item => !shoppingMode || !item.is_checked) // Hide checked items in shopping mode
+                          .map(item => (
                           editingItem?.id === item.id ? (
                             // Edit mode
                             <View key={item.id} style={[styles.itemRow, styles.itemRowEditing]}>
@@ -1798,39 +2082,52 @@ export default function ShoppingListScreen() {
                                 <Ionicons name="close" size={20} color="rgba(255,255,255,0.7)" />
                               </TouchableOpacity>
                             </View>
-                          ) : (
-                            // Normal mode
+                          ) : shoppingMode ? (
+                            // Shopping Mode - Large card UI
                             <TouchableOpacity
                               key={item.id}
-                              style={[
-                                styles.itemRow,
-                                item.is_checked && styles.itemRowChecked,
-                              ]}
+                              style={styles.shoppingModeCard}
                               onPress={() => handleToggleItem(item)}
+                            >
+                              <View style={styles.shoppingModeCheckbox}>
+                                {item.is_checked ? (
+                                  <Ionicons name="checkmark-circle" size={48} color="#10B981" />
+                                ) : (
+                                  <Ionicons name="ellipse-outline" size={48} color="rgba(255,255,255,0.3)" />
+                                )}
+                              </View>
+                              <View style={styles.shoppingModeInfo}>
+                                <Text style={styles.shoppingModeName}>{item.item_name}</Text>
+                                {item.quantity && (
+                                  <Text style={styles.shoppingModeQuantity}>{item.quantity}</Text>
+                                )}
+                              </View>
+                            </TouchableOpacity>
+                          ) : (
+                            // Normal mode - checkbox = selection for Instacart
+                            <TouchableOpacity
+                              key={item.id}
+                              style={styles.itemRow}
+                              onPress={() => handleToggleSelection(item.id)}
                               onLongPress={() => handleDeleteItem(item)}
                             >
                               <View
                                 style={[
                                   styles.checkbox,
-                                  item.is_checked && styles.checkboxChecked,
+                                  selectedForInstacart.has(item.id) && styles.checkboxChecked,
                                 ]}
                               >
-                                {item.is_checked && (
+                                {selectedForInstacart.has(item.id) && (
                                   <Ionicons name="checkmark" size={14} color="#ffffff" />
                                 )}
                               </View>
 
                               <View style={styles.itemInfo}>
-                                <Text
-                                  style={[
-                                    styles.itemName,
-                                    item.is_checked && styles.itemNameChecked,
-                                  ]}
-                                >
+                                <Text style={styles.itemName}>
                                   {item.item_name}
                                 </Text>
-                                {/* Quantity Stepper - Phase 1 Feature (only for unchecked items) */}
-                                {!item.is_checked && item.quantity ? (
+                                {/* Quantity Stepper - Phase 1 Feature */}
+                                {item.quantity ? (
                                   <View onStartShouldSetResponder={() => true}>
                                     <ItemQuantityStepper
                                       quantity={item.quantity}
@@ -1838,8 +2135,6 @@ export default function ShoppingListScreen() {
                                       disabled={false}
                                     />
                                   </View>
-                                ) : item.quantity ? (
-                                  <Text style={styles.itemQuantity}>{item.quantity}</Text>
                                 ) : null}
                                 {item.notes && (
                                   <Text style={styles.itemNotes}>{item.notes}</Text>
@@ -1864,13 +2159,33 @@ export default function ShoppingListScreen() {
                                 </View>
                               )}
 
-                              <TouchableOpacity
-                                style={styles.editItemButton}
-                                onPress={() => startEditingItem(item)}
-                                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                              >
-                                <Ionicons name="pencil" size={16} color="rgba(255,255,255,0.4)" />
-                              </TouchableOpacity>
+                              {/* Reorder buttons (Phase 3B) - show in reorder mode */}
+                              {reorderMode ? (
+                                <View style={styles.reorderControls}>
+                                  <TouchableOpacity
+                                    style={styles.reorderButton}
+                                    onPress={() => handleMoveItem(item, 'up')}
+                                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                  >
+                                    <Ionicons name="chevron-up" size={20} color="rgba(255,255,255,0.6)" />
+                                  </TouchableOpacity>
+                                  <TouchableOpacity
+                                    style={styles.reorderButton}
+                                    onPress={() => handleMoveItem(item, 'down')}
+                                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                  >
+                                    <Ionicons name="chevron-down" size={20} color="rgba(255,255,255,0.6)" />
+                                  </TouchableOpacity>
+                                </View>
+                              ) : (
+                                <TouchableOpacity
+                                  style={styles.editItemButton}
+                                  onPress={() => startEditingItem(item)}
+                                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                >
+                                  <Ionicons name="pencil" size={16} color="rgba(255,255,255,0.4)" />
+                                </TouchableOpacity>
+                              )}
                             </TouchableOpacity>
                           )
                         ))}
@@ -1920,7 +2235,9 @@ export default function ShoppingListScreen() {
                     </Text>
                   </View>
 
-                  {categoryItems.map(item => (
+                  {categoryItems
+                    .filter(item => !shoppingMode || !item.is_checked) // Hide checked items in shopping mode
+                    .map(item => (
                     editingItem?.id === item.id ? (
                       // Edit mode
                       <View key={item.id} style={[styles.itemRow, styles.itemRowEditing]}>
@@ -1945,39 +2262,53 @@ export default function ShoppingListScreen() {
                           <Ionicons name="close" size={20} color="rgba(255,255,255,0.7)" />
                         </TouchableOpacity>
                       </View>
-                    ) : (
-                      // Normal mode
+                    ) : shoppingMode ? (
+                      // Shopping Mode - Large card UI for in-store use
                       <TouchableOpacity
                         key={item.id}
-                        style={[
-                          styles.itemRow,
-                          item.is_checked && styles.itemRowChecked,
-                        ]}
+                        style={styles.shoppingModeCard}
                         onPress={() => handleToggleItem(item)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.shoppingModeCheckbox}>
+                          {item.is_checked ? (
+                            <Ionicons name="checkmark-circle" size={48} color="#10B981" />
+                          ) : (
+                            <Ionicons name="ellipse-outline" size={48} color="rgba(255,255,255,0.3)" />
+                          )}
+                        </View>
+                        <View style={styles.shoppingModeInfo}>
+                          <Text style={styles.shoppingModeName}>{item.item_name}</Text>
+                          {item.quantity && (
+                            <Text style={styles.shoppingModeQuantity}>{item.quantity}</Text>
+                          )}
+                        </View>
+                      </TouchableOpacity>
+                    ) : (
+                      // Normal mode - checkbox = selection for Instacart
+                      <TouchableOpacity
+                        key={item.id}
+                        style={styles.itemRow}
+                        onPress={() => handleToggleSelection(item.id)}
                         onLongPress={() => handleDeleteItem(item)}
                       >
                         <View
                           style={[
                             styles.checkbox,
-                            item.is_checked && styles.checkboxChecked,
+                            selectedForInstacart.has(item.id) && styles.checkboxChecked,
                           ]}
                         >
-                          {item.is_checked && (
+                          {selectedForInstacart.has(item.id) && (
                             <Ionicons name="checkmark" size={14} color="#ffffff" />
                           )}
                         </View>
 
                         <View style={styles.itemInfo}>
-                          <Text
-                            style={[
-                              styles.itemName,
-                              item.is_checked && styles.itemNameChecked,
-                            ]}
-                          >
+                          <Text style={styles.itemName}>
                             {item.item_name}
                           </Text>
-                          {/* Quantity Stepper - Phase 1 Feature (only for unchecked items) */}
-                          {!item.is_checked && item.quantity ? (
+                          {/* Quantity Stepper - Phase 1 Feature */}
+                          {item.quantity ? (
                             <View onStartShouldSetResponder={() => true}>
                               <ItemQuantityStepper
                                 quantity={item.quantity}
@@ -1985,8 +2316,6 @@ export default function ShoppingListScreen() {
                                 disabled={false}
                               />
                             </View>
-                          ) : item.quantity ? (
-                            <Text style={styles.itemQuantity}>{item.quantity}</Text>
                           ) : null}
                           {item.notes && (
                             <Text style={styles.itemNotes}>{item.notes}</Text>
@@ -2078,6 +2407,30 @@ export default function ShoppingListScreen() {
                       <Ionicons name="close" size={24} color="rgba(255,255,255,0.5)" />
                     </TouchableOpacity>
                   </View>
+
+                  {/* Smart Suggestions dropdown - Phase 2 */}
+                  {showSuggestions && suggestions.length > 0 && (
+                    <View style={styles.suggestionsContainer}>
+                      <Text style={styles.suggestionsHeader}>Suggestions</Text>
+                      <ScrollView
+                        style={styles.suggestionsList}
+                        keyboardShouldPersistTaps="handled"
+                      >
+                        {suggestions.map((suggestion, index) => (
+                          <TouchableOpacity
+                            key={index}
+                            style={styles.suggestionItem}
+                            onPress={() => handleSelectSuggestion(suggestion)}
+                          >
+                            <Ionicons name="time-outline" size={16} color="rgba(255,255,255,0.5)" />
+                            <Text style={styles.suggestionText}>{suggestion}</Text>
+                            <Ionicons name="arrow-forward" size={14} color="rgba(255,255,255,0.3)" />
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                    </View>
+                  )}
+
                   {/* Priority selector */}
                   <View style={styles.prioritySelector}>
                     <Text style={styles.prioritySelectorLabel}>Priority:</Text>
@@ -2537,6 +2890,19 @@ export default function ShoppingListScreen() {
             </View>
           </View>
         </Modal>
+
+        {/* Barcode Scanner Modal - Phase 3A (temporarily disabled - requires native build)
+        <Modal
+          visible={showBarcodeScanner}
+          animationType="slide"
+          onRequestClose={() => setShowBarcodeScanner(false)}
+        >
+          <BarcodeScanner
+            onBarcodeScanned={handleBarcodeScanned}
+            onClose={() => setShowBarcodeScanner(false)}
+          />
+        </Modal>
+        */}
       </View>
     );
   };
@@ -2626,6 +2992,10 @@ const styles = StyleSheet.create({
   },
   heroAction: {
     padding: 8,
+  },
+  heroActionActive: {
+    backgroundColor: 'rgba(16, 185, 129, 0.2)',
+    borderRadius: 8,
   },
   // Legacy header styles (keeping for compatibility)
   headerGradient: {
@@ -2808,6 +3178,22 @@ const styles = StyleSheet.create({
     color: '#10b981',
     flex: 1,
   },
+  reorderBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    backgroundColor: 'rgba(59,130,246,0.1)',
+    borderRadius: 8,
+    marginHorizontal: 16,
+    marginBottom: 12,
+  },
+  reorderBannerText: {
+    fontSize: 12,
+    color: '#3B82F6',
+    flex: 1,
+  },
   itemsList: {
     flex: 1,
   },
@@ -2984,6 +3370,38 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: 'rgba(245, 158, 11, 0.7)',
     marginLeft: 'auto',
+  },
+
+  // Phase 2: Shopping Mode Styles
+  shoppingModeCard: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderRadius: 16,
+    padding: 24,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 20,
+    minHeight: 120,
+  },
+  shoppingModeCheckbox: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  shoppingModeInfo: {
+    flex: 1,
+    gap: 8,
+  },
+  shoppingModeName: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#ffffff',
+    lineHeight: 34,
+  },
+  shoppingModeQuantity: {
+    fontSize: 20,
+    fontWeight: '500',
+    color: '#94a3b8',
   },
 
   // Scan Type Selector styles
@@ -3440,6 +3858,42 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     paddingHorizontal: 16,
   },
+  // Phase 2: Smart Suggestions styles
+  suggestionsContainer: {
+    marginTop: 12,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 12,
+    padding: 8,
+    maxHeight: 200,
+  },
+  suggestionsHeader: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.6)',
+    marginBottom: 8,
+    marginLeft: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  suggestionsList: {
+    maxHeight: 160,
+  },
+  suggestionItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 8,
+    marginBottom: 6,
+    gap: 10,
+  },
+  suggestionText: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#ffffff',
+  },
   prioritySelector: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3506,6 +3960,17 @@ const styles = StyleSheet.create({
   editItemButton: {
     padding: 4,
     marginLeft: 8,
+  },
+  // Phase 3B: Reorder controls
+  reorderControls: {
+    flexDirection: 'column',
+    gap: 4,
+    marginLeft: 8,
+  },
+  reorderButton: {
+    padding: 4,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 6,
   },
 
   // Scan results - add to list button

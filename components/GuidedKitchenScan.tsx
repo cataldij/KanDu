@@ -1,12 +1,16 @@
 /**
  * GuidedKitchenScan - Multi-angle capture for home base (kitchen)
  *
- * Walks user through capturing 5 images:
- * 1. Front - Main view (facing sink/counter)
- * 2. Right - 90° clockwise
- * 3. Back - 180° (opposite direction)
- * 4. Left - 270° clockwise
- * 5. Exit - Main doorway/exit from kitchen
+ * Walks user through capturing 9 images (8 compass directions + exit):
+ * 1. Front - Main view (facing sink/counter) - 0°
+ * 2. Front-Right - 45° clockwise
+ * 3. Right - 90° clockwise
+ * 4. Back-Right - 135° clockwise
+ * 5. Back - 180° (opposite direction)
+ * 6. Back-Left - 225° clockwise
+ * 7. Left - 270° clockwise
+ * 8. Front-Left - 315° clockwise
+ * 9. Exit - Main doorway/exit from kitchen
  */
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -25,13 +29,14 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path, Circle, G } from 'react-native-svg';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { supabase } from '../services/supabase';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export interface KitchenImage {
   url: string;
-  angle: 'front' | 'right' | 'back' | 'left' | 'exit';
+  angle: 'front' | 'front_right' | 'right' | 'back_right' | 'back' | 'back_left' | 'left' | 'front_left' | 'exit';
   description?: string;
 }
 
@@ -53,36 +58,64 @@ interface ScanStep {
 const SCAN_STEPS: ScanStep[] = [
   {
     angle: 'front',
-    title: 'Front View',
+    title: 'Front View (0°)',
     instruction: 'Stand in the center of your kitchen.\nFace your main counter or sink area.',
     icon: 'arrow-up',
     rotation: 0,
   },
   {
+    angle: 'front_right',
+    title: 'Front-Right (45°)',
+    instruction: 'Turn 45° to your RIGHT.\nHalfway between front and right side.',
+    icon: 'arrow-up',
+    rotation: 45,
+  },
+  {
     angle: 'right',
-    title: 'Right Side',
-    instruction: 'Turn 90° to your RIGHT.\nKeep the same spot, just rotate.',
+    title: 'Right Side (90°)',
+    instruction: 'Turn another 45° RIGHT.\nNow facing the right side.',
     icon: 'arrow-forward',
     rotation: 90,
   },
   {
+    angle: 'back_right',
+    title: 'Back-Right (135°)',
+    instruction: 'Turn 45° RIGHT again.\nHalfway to the back wall.',
+    icon: 'arrow-forward',
+    rotation: 135,
+  },
+  {
     angle: 'back',
-    title: 'Back View',
-    instruction: 'Turn another 90° to your RIGHT.\nYou should face the opposite wall now.',
+    title: 'Back View (180°)',
+    instruction: 'Turn 45° RIGHT.\nYou should face the opposite wall now.',
     icon: 'arrow-down',
     rotation: 180,
   },
   {
+    angle: 'back_left',
+    title: 'Back-Left (225°)',
+    instruction: 'Turn 45° RIGHT.\nHalfway between back and left side.',
+    icon: 'arrow-down',
+    rotation: 225,
+  },
+  {
     angle: 'left',
-    title: 'Left Side',
-    instruction: 'Turn 90° RIGHT again.\nAlmost done with the 360°!',
+    title: 'Left Side (270°)',
+    instruction: 'Turn 45° RIGHT.\nNow facing the left side.',
     icon: 'arrow-back',
     rotation: 270,
   },
   {
+    angle: 'front_left',
+    title: 'Front-Left (315°)',
+    instruction: 'Turn 45° RIGHT.\nAlmost back to start!',
+    icon: 'arrow-back',
+    rotation: 315,
+  },
+  {
     angle: 'exit',
     title: 'Main Exit',
-    instruction: 'Now point at the main doorway\nwhere guests will enter/exit.',
+    instruction: 'Finally, point at the main doorway\nwhere guests will enter/exit the kitchen.',
     icon: 'exit-outline',
     rotation: -1, // Special case - no compass rotation
   },
@@ -104,13 +137,23 @@ export default function GuidedKitchenScan({
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const rotateAnim = useRef(new Animated.Value(0)).current;
 
-  // Upload image to Supabase storage
+  // Upload image to Supabase storage (with resize for smaller files)
   const uploadImageToStorage = async (localUri: string, angle: string): Promise<string | null> => {
     try {
-      console.log(`[KitchenScan] Uploading ${angle} image...`);
+      console.log(`[KitchenScan] Processing ${angle} image...`);
 
-      // Fetch the local file
-      const response = await fetch(localUri);
+      // Resize image to 800px width - keeps files small (~100-200KB vs 2-4MB)
+      // This is plenty for Gemini's visual analysis while reducing storage and API costs
+      const resized = await ImageManipulator.manipulateAsync(
+        localUri,
+        [{ resize: { width: 800 } }],
+        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
+      );
+
+      console.log(`[KitchenScan] Resized to 800px width: ${resized.uri}`);
+
+      // Fetch the resized file
+      const response = await fetch(resized.uri);
       const blob = await response.blob();
 
       // Convert blob to ArrayBuffer (React Native fix)
@@ -396,47 +439,85 @@ export default function GuidedKitchenScan({
             <Text style={styles.stepInstruction}>{step.instruction}</Text>
           </LinearGradient>
 
-          {/* Compass indicator (for 360° steps) */}
+          {/* Enhanced 8-direction compass */}
           {step.rotation >= 0 && (
             <View style={styles.compassContainer}>
-              <Svg width={100} height={100} viewBox="0 0 100 100">
+              <Svg width={140} height={140} viewBox="0 0 140 140">
                 {/* Compass circle */}
                 <Circle
-                  cx="50"
-                  cy="50"
-                  r="45"
-                  fill="rgba(0,0,0,0.5)"
+                  cx="70"
+                  cy="70"
+                  r="60"
+                  fill="rgba(0,0,0,0.6)"
                   stroke="rgba(255,255,255,0.3)"
                   strokeWidth="2"
                 />
-                {/* Direction markers */}
-                <G rotation={0} origin="50, 50">
-                  <Path d="M50 10 L50 20" stroke="#fff" strokeWidth="2" />
-                  <Path d="M90 50 L80 50" stroke="rgba(255,255,255,0.5)" strokeWidth="1" />
-                  <Path d="M50 90 L50 80" stroke="rgba(255,255,255,0.5)" strokeWidth="1" />
-                  <Path d="M10 50 L20 50" stroke="rgba(255,255,255,0.5)" strokeWidth="1" />
+                {/* 8 direction markers - show all angles */}
+                {[0, 45, 90, 135, 180, 225, 270, 315].map((angle) => {
+                  const isCurrentAngle = angle === step.rotation;
+                  const isCaptured = capturedImages.some(
+                    img => SCAN_STEPS.find(s => s.angle === img.angle)?.rotation === angle
+                  );
+                  const rad = (angle - 90) * Math.PI / 180;
+                  const x1 = 70 + 48 * Math.cos(rad);
+                  const y1 = 70 + 48 * Math.sin(rad);
+                  const x2 = 70 + 58 * Math.cos(rad);
+                  const y2 = 70 + 58 * Math.sin(rad);
+
+                  // Current angle: bright cyan/blue, Captured: green, Uncaptured: grey
+                  const tickColor = isCurrentAngle ? '#38bdf8' : isCaptured ? '#10b981' : 'rgba(255,255,255,0.5)';
+
+                  return (
+                    <G key={angle}>
+                      {/* Tick mark */}
+                      <Path
+                        d={`M${x1} ${y1} L${x2} ${y2}`}
+                        stroke={tickColor}
+                        strokeWidth={isCurrentAngle ? 4 : 2}
+                      />
+                      {/* Completion dot for captured (not current) */}
+                      {isCaptured && !isCurrentAngle && (
+                        <Circle
+                          cx={70 + 42 * Math.cos(rad)}
+                          cy={70 + 42 * Math.sin(rad)}
+                          r={4}
+                          fill="#10b981"
+                        />
+                      )}
+                      {/* Pulsing dot for current angle */}
+                      {isCurrentAngle && (
+                        <Circle
+                          cx={70 + 42 * Math.cos(rad)}
+                          cy={70 + 42 * Math.sin(rad)}
+                          r={6}
+                          fill="#38bdf8"
+                        />
+                      )}
+                    </G>
+                  );
+                })}
+                {/* Center dot */}
+                <Circle cx="70" cy="70" r="4" fill="rgba(255,255,255,0.5)" />
+                {/* Arrow pointing current direction - bright cyan */}
+                <G rotation={step.rotation} origin="70, 70">
+                  <Path
+                    d="M70 18 L64 40 L70 34 L76 40 Z"
+                    fill="#38bdf8"
+                  />
                 </G>
-                {/* Arrow pointing current direction */}
-                <Animated.View
-                  style={{
-                    transform: [{
-                      rotate: rotateAnim.interpolate({
-                        inputRange: [0, 360],
-                        outputRange: ['0deg', '360deg'],
-                      }),
-                    }],
-                  }}
-                >
-                  <G>
-                    <Path
-                      d="M50 15 L45 35 L50 30 L55 35 Z"
-                      fill="#10b981"
-                    />
-                  </G>
-                </Animated.View>
               </Svg>
+              {/* Angle labels around compass */}
+              <View style={styles.compassLabels}>
+                <Text style={[styles.compassAngleLabel, styles.compassLabelTop]}>0°</Text>
+                <Text style={[styles.compassAngleLabel, styles.compassLabelRight]}>90°</Text>
+                <Text style={[styles.compassAngleLabel, styles.compassLabelBottom]}>180°</Text>
+                <Text style={[styles.compassAngleLabel, styles.compassLabelLeft]}>270°</Text>
+              </View>
               <Text style={styles.compassLabel}>
                 {step.rotation === 0 ? 'START' : `${step.rotation}°`}
+              </Text>
+              <Text style={styles.compassProgress}>
+                {capturedImages.filter(img => img.angle !== 'exit').length}/8 captured
               </Text>
             </View>
           )}
@@ -561,9 +642,47 @@ const styles = StyleSheet.create({
   },
   compassLabel: {
     color: '#fff',
-    fontSize: 12,
+    fontSize: 14,
+    fontWeight: '700',
+    marginTop: 8,
+  },
+  compassProgress: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 11,
+    marginTop: 2,
+  },
+  compassLabels: {
+    position: 'absolute',
+    width: 180,
+    height: 180,
+    top: -20,
+    left: -20,
+  },
+  compassAngleLabel: {
+    position: 'absolute',
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 10,
     fontWeight: '600',
-    marginTop: 4,
+  },
+  compassLabelTop: {
+    top: 0,
+    left: '50%',
+    marginLeft: -10,
+  },
+  compassLabelRight: {
+    top: '50%',
+    right: 0,
+    marginTop: -7,
+  },
+  compassLabelBottom: {
+    bottom: 0,
+    left: '50%',
+    marginLeft: -14,
+  },
+  compassLabelLeft: {
+    top: '50%',
+    left: 0,
+    marginTop: -7,
   },
   frameGuide: {
     position: 'absolute',

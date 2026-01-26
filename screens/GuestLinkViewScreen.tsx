@@ -19,6 +19,7 @@ import {
   Linking,
   Dimensions,
   Modal,
+  Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,7 +27,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Clipboard from 'expo-clipboard';
-import Svg, { Path } from 'react-native-svg';
+import Svg, { Path, Defs, LinearGradient as SvgLinearGradient, Stop, Polygon, Circle as SvgCircle } from 'react-native-svg';
+
+// Create animated Path component for countdown ring
+const AnimatedPath = Animated.createAnimatedComponent(Path);
 
 import {
   getGuestKitBySlug,
@@ -84,6 +88,144 @@ export default function GuestLinkViewScreen() {
   const [currentStep, setCurrentStep] = useState(1);
 
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
+
+  // AR overlay state for camera view
+  const [cameraHighlight, setCameraHighlight] = useState<{
+    region: { x: number; y: number; width: number; height: number };
+    description: string;
+    arrived: boolean;
+    instruction: string;
+  } | null>(null);
+  const highlightPulse = useRef(new Animated.Value(1)).current;
+
+  // Floor arrow direction state
+  const [moveDirection, setMoveDirection] = useState<
+    'forward' | 'left' | 'right' | 'slight_left' | 'slight_right' | 'back' | 'arrived' | null
+  >(null);
+  const arrowBounce = useRef(new Animated.Value(0)).current;
+  const arrowOpacity = useRef(new Animated.Value(0)).current;
+
+  // Auto-scan state for continuous navigation
+  const [autoScanEnabled, setAutoScanEnabled] = useState(true);
+  const [frozenFrame, setFrozenFrame] = useState<string | null>(null); // Base64 image for freeze frame
+  const scanProgress = useRef(new Animated.Value(0)).current;
+  const autoScanTimer = useRef<NodeJS.Timeout | null>(null);
+  const scanAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
+
+  // Adaptive timing based on direction - longer delays for bigger turns
+  const getAutoScanInterval = () => {
+    switch (moveDirection) {
+      case 'back':
+        return 4000; // 4 seconds for 180° turn
+      case 'left':
+      case 'right':
+      case 'slight_left':
+      case 'slight_right':
+      case 'forward':
+      default:
+        return 3000; // 3 seconds for forward and turns
+    }
+  };
+
+  // Pulsing animation for highlight overlay
+  useEffect(() => {
+    if (cameraHighlight) {
+      const pulse = Animated.loop(
+        Animated.sequence([
+          Animated.timing(highlightPulse, {
+            toValue: 1.1,
+            duration: 600,
+            useNativeDriver: true,
+          }),
+          Animated.timing(highlightPulse, {
+            toValue: 1,
+            duration: 600,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      pulse.start();
+      return () => pulse.stop();
+    }
+  }, [cameraHighlight]);
+
+  // Floor arrow animation - gentle bouncing motion
+  useEffect(() => {
+    if (moveDirection && moveDirection !== 'arrived') {
+      // Fade in
+      Animated.timing(arrowOpacity, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
+
+      // Bouncing animation to suggest movement
+      const bounce = Animated.loop(
+        Animated.sequence([
+          Animated.timing(arrowBounce, {
+            toValue: -15,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+          Animated.timing(arrowBounce, {
+            toValue: 0,
+            duration: 800,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      bounce.start();
+      return () => bounce.stop();
+    } else {
+      // Fade out
+      Animated.timing(arrowOpacity, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [moveDirection]);
+
+  // Auto-scan timer - continuous scanning for seamless navigation
+  // Uses adaptive timing: longer delays for bigger turns (back=5s, turns=4s, forward=3.5s)
+  useEffect(() => {
+    if (showCamera && autoScanEnabled && !frozenFrame && !scanning) {
+      const interval = getAutoScanInterval();
+
+      // Start countdown animation
+      scanProgress.setValue(0);
+      scanAnimationRef.current = Animated.timing(scanProgress, {
+        toValue: 1,
+        duration: interval,
+        useNativeDriver: false,
+      });
+
+      scanAnimationRef.current.start(({ finished }) => {
+        if (finished && showCamera && autoScanEnabled && !frozenFrame) {
+          // Trigger auto-scan
+          handleAutoScan();
+        }
+      });
+
+      return () => {
+        if (scanAnimationRef.current) {
+          scanAnimationRef.current.stop();
+        }
+      };
+    }
+  }, [showCamera, autoScanEnabled, frozenFrame, scanning, scanResult, moveDirection]);
+
+  // Cleanup on camera close
+  useEffect(() => {
+    if (!showCamera) {
+      setFrozenFrame(null);
+      setAutoScanEnabled(true);
+      scanProgress.setValue(0);
+      if (scanAnimationRef.current) {
+        scanAnimationRef.current.stop();
+      }
+    }
+  }, [showCamera]);
 
   useEffect(() => {
     if (slug) {
@@ -148,44 +290,129 @@ export default function GuestLinkViewScreen() {
         return;
       }
     }
+    // Reset state for fresh navigation
+    setFrozenFrame(null);
+    setAutoScanEnabled(true);
+    setCameraHighlight(null);
+    setMoveDirection(null);
     setShowCamera(true);
   };
 
-  const handleCaptureScan = async () => {
-    if (!cameraRef.current || !kit || !selectedItem) return;
+  // Core scan function - used by both auto and manual scan
+  const performScan = async (isAutoScan = false): Promise<boolean> => {
+    if (!cameraRef.current || !kit || !selectedItem) return false;
 
-    setScanning(true);
     try {
       const photo = await cameraRef.current.takePictureAsync({
         base64: true,
         quality: 0.5,
       });
 
-      if (photo?.base64) {
-        const result = await scanNavigate(
-          kit.id,
-          selectedItem.id,
-          photo.base64,
-          currentStep
-        );
+      if (!photo?.base64) return false;
 
-        if (result.error) {
+      const result = await scanNavigate(
+        kit.id,
+        selectedItem.id,
+        photo.base64,
+        currentStep
+      );
+
+      if (result.error) {
+        if (!isAutoScan) {
           Alert.alert('Scan Failed', result.error);
-        } else if (result.data) {
-          setScanResult(result.data);
-          setShowCamera(false);
-
-          if (result.data.navigation.arrived) {
-            // Arrived at destination
-          } else {
-            setCurrentStep(result.data.navigation.step_number + 1);
-          }
         }
+        return false;
       }
+
+      if (result.data) {
+        setScanResult(result.data);
+
+        // Set the floor arrow direction
+        if (result.data.navigation.arrived) {
+          setMoveDirection('arrived');
+          // FREEZE FRAME: Stop auto-scan and show captured image
+          setAutoScanEnabled(false);
+          setFrozenFrame(`data:image/jpeg;base64,${photo.base64}`);
+        } else if (result.data.navigation.move_direction) {
+          setMoveDirection(result.data.navigation.move_direction);
+        } else {
+          setMoveDirection('forward');
+        }
+
+        // Update instruction overlay
+        const highlightData = {
+          region: result.data.navigation.highlight?.region || { x: 0.5, y: 0.5, width: 0, height: 0 },
+          description: result.data.navigation.highlight?.description || '',
+          arrived: result.data.navigation.arrived,
+          instruction: result.data.navigation.next_instruction,
+        };
+        setCameraHighlight(highlightData);
+
+        if (!result.data.navigation.arrived) {
+          setCurrentStep(result.data.navigation.step_number + 1);
+        }
+
+        return result.data.navigation.arrived;
+      }
+
+      return false;
     } catch (err) {
-      Alert.alert('Scan Error', 'Please try again');
-    } finally {
-      setScanning(false);
+      if (!isAutoScan) {
+        Alert.alert('Scan Error', 'Please try again');
+      }
+      return false;
+    }
+  };
+
+  // Auto-scan triggered by timer
+  const handleAutoScan = async () => {
+    if (scanning || frozenFrame) return;
+    setScanning(true);
+    await performScan(true);
+    setScanning(false);
+  };
+
+  // Manual scan (user taps button) - also resets the auto-scan timer
+  const handleCaptureScan = async () => {
+    if (scanning) return;
+
+    // Stop current auto-scan animation
+    if (scanAnimationRef.current) {
+      scanAnimationRef.current.stop();
+    }
+    scanProgress.setValue(0);
+
+    setScanning(true);
+    await performScan(false);
+    setScanning(false);
+  };
+
+  const handleCloseCamera = () => {
+    setShowCamera(false);
+    setCameraHighlight(null);
+    setMoveDirection(null);
+    setFrozenFrame(null);
+    setAutoScanEnabled(true);
+  };
+
+  const handleContinueToResults = () => {
+    setShowCamera(false);
+    setCameraHighlight(null);
+    setMoveDirection(null);
+    setFrozenFrame(null);
+    setAutoScanEnabled(true);
+  };
+
+  // Get rotation angle for floor arrow based on direction
+  const getArrowRotation = () => {
+    switch (moveDirection) {
+      case 'forward': return 0;
+      case 'slight_right': return 45;
+      case 'right': return 90;
+      case 'back': return 180;
+      case 'slight_left': return -45;
+      case 'left': return -90;
+      default: return 0;
     }
   };
 
@@ -306,70 +533,336 @@ export default function GuestLinkViewScreen() {
   }
 
   // ============================================
-  // RENDER: Camera scan modal
+  // RENDER: Camera scan modal with AR overlay
   // ============================================
 
   if (showCamera) {
+    // Calculate AR highlight box position based on normalized coordinates (0-1)
+    const getHighlightStyle = () => {
+      if (!cameraHighlight?.region || cameraHighlight.region.width === 0) {
+        return null;
+      }
+      const { x, y, width, height } = cameraHighlight.region;
+      // Coordinates are normalized 0-1, scale to screen
+      const boxWidth = Math.max(width * SCREEN_WIDTH, 80);
+      const boxHeight = Math.max(height * SCREEN_HEIGHT, 80);
+      const boxLeft = x * SCREEN_WIDTH - boxWidth / 2;
+      const boxTop = y * SCREEN_HEIGHT - boxHeight / 2;
+
+      return {
+        position: 'absolute' as const,
+        left: Math.max(10, Math.min(boxLeft, SCREEN_WIDTH - boxWidth - 10)),
+        top: Math.max(insets.top + 80, Math.min(boxTop, SCREEN_HEIGHT - boxHeight - 200)),
+        width: boxWidth,
+        height: boxHeight,
+      };
+    };
+
+    const highlightStyle = getHighlightStyle();
+
+    // Countdown ring dimensions
+    const ringSize = 50;
+    const ringStrokeWidth = 4;
+    const ringRadius = (ringSize - ringStrokeWidth) / 2;
+    const ringCircumference = 2 * Math.PI * ringRadius;
+
     return (
       <View style={styles.cameraContainer}>
-        <CameraView
-          ref={cameraRef}
-          style={styles.camera}
-          facing="back"
-        >
-          {/* Camera overlay */}
-          <View style={styles.cameraOverlay}>
-            <View style={[styles.cameraHeader, { paddingTop: insets.top + 16 }]}>
-              <TouchableOpacity
-                style={styles.cameraCloseButton}
-                onPress={() => setShowCamera(false)}
-              >
-                <Ionicons name="close" size={28} color="#fff" />
-              </TouchableOpacity>
-              <Text style={styles.cameraTitle}>Point at your surroundings</Text>
-              <View style={{ width: 44 }} />
+        {/* Frozen frame overlay when arrived */}
+        {frozenFrame && (
+          <Image
+            source={{ uri: frozenFrame }}
+            style={StyleSheet.absoluteFill}
+            resizeMode="cover"
+          />
+        )}
+
+        {/* Live camera (hidden when frozen) */}
+        {!frozenFrame && (
+          <CameraView
+            ref={cameraRef}
+            style={styles.camera}
+            facing="back"
+          />
+        )}
+
+        {/* Overlay content (works on both frozen and live) */}
+        <View style={[styles.cameraOverlay, StyleSheet.absoluteFill]}>
+          {/* Header with countdown ring */}
+          <View style={[styles.cameraHeader, { paddingTop: insets.top + 16 }]}>
+            <TouchableOpacity
+              style={styles.cameraCloseButton}
+              onPress={handleCloseCamera}
+            >
+              <Ionicons name="close" size={28} color="#fff" />
+            </TouchableOpacity>
+
+            {/* Center: Title or Countdown Ring */}
+            <View style={styles.cameraHeaderCenter}>
+              {!frozenFrame && autoScanEnabled && !scanning ? (
+                <View style={styles.countdownContainer}>
+                  <Svg width={ringSize} height={ringSize} style={styles.countdownRing}>
+                    {/* Background circle */}
+                    <Path
+                      d={`M ${ringSize/2} ${ringStrokeWidth/2} A ${ringRadius} ${ringRadius} 0 1 1 ${ringSize/2 - 0.01} ${ringStrokeWidth/2}`}
+                      fill="none"
+                      stroke="rgba(255,255,255,0.2)"
+                      strokeWidth={ringStrokeWidth}
+                    />
+                    {/* Progress circle */}
+                    <AnimatedPath
+                      d={`M ${ringSize/2} ${ringStrokeWidth/2} A ${ringRadius} ${ringRadius} 0 1 1 ${ringSize/2 - 0.01} ${ringStrokeWidth/2}`}
+                      fill="none"
+                      stroke="#1E90FF"
+                      strokeWidth={ringStrokeWidth}
+                      strokeLinecap="round"
+                      strokeDasharray={`${ringCircumference}`}
+                      strokeDashoffset={scanProgress.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [ringCircumference, 0],
+                      })}
+                    />
+                  </Svg>
+                  <View style={styles.countdownInner}>
+                    <Ionicons name="scan-outline" size={18} color="#fff" />
+                  </View>
+                </View>
+              ) : scanning ? (
+                <View style={styles.scanningIndicator}>
+                  <ActivityIndicator size="small" color="#fff" />
+                  <Text style={styles.scanningText}>Scanning...</Text>
+                </View>
+              ) : (
+                <Text style={styles.cameraTitle}>
+                  {cameraHighlight?.arrived ? 'Found it!' : 'Navigating...'}
+                </Text>
+              )}
             </View>
 
-            {/* Scan frame */}
-            <View style={styles.scanFrame}>
-              <View style={styles.scanCorner} />
-              <View style={[styles.scanCorner, styles.scanCornerTR]} />
-              <View style={[styles.scanCorner, styles.scanCornerBL]} />
-              <View style={[styles.scanCorner, styles.scanCornerBR]} />
-            </View>
+            <View style={{ width: 44 }} />
+          </View>
 
-            {/* Bottom info */}
-            <View style={[styles.cameraBottom, { paddingBottom: insets.bottom + 20 }]}>
-              <Text style={styles.cameraHint}>
-                Looking for: {getItemName(selectedItem!)}
-              </Text>
-              <TouchableOpacity
-                style={styles.scanButton}
-                onPress={handleCaptureScan}
-                disabled={scanning}
+            {/* AR Highlight Overlay */}
+            {highlightStyle && cameraHighlight && (
+              <Animated.View
+                style={[
+                  styles.arHighlightBox,
+                  highlightStyle,
+                  {
+                    transform: [{ scale: highlightPulse }],
+                    borderColor: cameraHighlight.arrived ? '#10b981' : '#1E90FF',
+                    backgroundColor: cameraHighlight.arrived
+                      ? 'rgba(16, 185, 129, 0.2)'
+                      : 'rgba(30, 144, 255, 0.15)',
+                  },
+                ]}
               >
-                <LinearGradient
-                  colors={['#1E90FF', '#00CBA9']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.scanButtonGradient}
-                >
-                  {scanning ? (
-                    <ActivityIndicator color="#fff" />
+                {/* Corner accents */}
+                <View style={[styles.arCorner, styles.arCornerTL,
+                  { borderColor: cameraHighlight.arrived ? '#10b981' : '#1E90FF' }]} />
+                <View style={[styles.arCorner, styles.arCornerTR,
+                  { borderColor: cameraHighlight.arrived ? '#10b981' : '#1E90FF' }]} />
+                <View style={[styles.arCorner, styles.arCornerBL,
+                  { borderColor: cameraHighlight.arrived ? '#10b981' : '#1E90FF' }]} />
+                <View style={[styles.arCorner, styles.arCornerBR,
+                  { borderColor: cameraHighlight.arrived ? '#10b981' : '#1E90FF' }]} />
+
+                {/* Icon in center */}
+                <View style={[
+                  styles.arIconContainer,
+                  { backgroundColor: cameraHighlight.arrived ? '#10b981' : '#1E90FF' }
+                ]}>
+                  <Ionicons
+                    name={cameraHighlight.arrived ? 'checkmark' : 'location'}
+                    size={24}
+                    color="#fff"
+                  />
+                </View>
+              </Animated.View>
+            )}
+
+            {/* Scan frame (shown when no highlight) */}
+            {!cameraHighlight && (
+              <View style={styles.scanFrame}>
+                <View style={styles.scanCorner} />
+                <View style={[styles.scanCorner, styles.scanCornerTR]} />
+                <View style={[styles.scanCorner, styles.scanCornerBL]} />
+                <View style={[styles.scanCorner, styles.scanCornerBR]} />
+              </View>
+            )}
+
+            {/* Floor Arrow - AR direction indicator */}
+            {moveDirection && moveDirection !== 'arrived' && (
+              <Animated.View
+                style={[
+                  styles.floorArrowContainer,
+                  {
+                    opacity: arrowOpacity,
+                    transform: [
+                      { translateY: arrowBounce },
+                      { rotate: `${getArrowRotation()}deg` },
+                    ],
+                  },
+                ]}
+              >
+                <Svg width={120} height={160} viewBox="0 0 120 160">
+                  <Defs>
+                    <SvgLinearGradient id="arrowGradient" x1="0" y1="0" x2="0" y2="1">
+                      <Stop offset="0" stopColor="#1E90FF" stopOpacity="0.9" />
+                      <Stop offset="0.5" stopColor="#00CBA9" stopOpacity="0.7" />
+                      <Stop offset="1" stopColor="#00CBA9" stopOpacity="0.3" />
+                    </SvgLinearGradient>
+                    <SvgLinearGradient id="arrowGlow" x1="0" y1="0" x2="0" y2="1">
+                      <Stop offset="0" stopColor="#fff" stopOpacity="0.4" />
+                      <Stop offset="1" stopColor="#fff" stopOpacity="0" />
+                    </SvgLinearGradient>
+                  </Defs>
+                  {/* Arrow shadow for depth */}
+                  <Polygon
+                    points="60,10 20,70 45,70 45,150 75,150 75,70 100,70"
+                    fill="rgba(0,0,0,0.3)"
+                    transform="translate(2, 4)"
+                  />
+                  {/* Main arrow body */}
+                  <Polygon
+                    points="60,10 20,70 45,70 45,150 75,150 75,70 100,70"
+                    fill="url(#arrowGradient)"
+                  />
+                  {/* Highlight/glow on left edge */}
+                  <Path
+                    d="M60 10 L20 70 L45 70 L45 150"
+                    stroke="url(#arrowGlow)"
+                    strokeWidth="3"
+                    fill="none"
+                  />
+                  {/* Inner chevron for extra emphasis */}
+                  <Polygon
+                    points="60,30 40,60 50,60 50,100 70,100 70,60 80,60"
+                    fill="rgba(255,255,255,0.25)"
+                  />
+                </Svg>
+              </Animated.View>
+            )}
+
+            {/* Instruction overlay when highlight is shown */}
+            {cameraHighlight && (
+              <View style={styles.arInstructionOverlay}>
+                <View style={[
+                  styles.arInstructionCard,
+                  cameraHighlight.arrived && styles.arInstructionCardSuccess
+                ]}>
+                  {cameraHighlight.arrived ? (
+                    <>
+                      <Ionicons name="checkmark-circle" size={28} color="#10b981" />
+                      <Text style={styles.arInstructionTitle}>
+                        {getItemName(selectedItem!)} Found!
+                      </Text>
+                      {cameraHighlight.description && (
+                        <Text style={styles.arInstructionText}>
+                          {cameraHighlight.description}
+                        </Text>
+                      )}
+                    </>
                   ) : (
                     <>
-                      <Ionicons name="scan" size={24} color="#fff" />
-                      <Text style={styles.scanButtonText}>Scan Location</Text>
+                      <Ionicons name="navigate" size={24} color="#1E90FF" />
+                      <Text style={styles.arInstructionText}>
+                        {cameraHighlight.instruction}
+                      </Text>
+                      {cameraHighlight.description && (
+                        <View style={styles.arLookForBox}>
+                          <Ionicons name="eye" size={16} color="#64748b" />
+                          <Text style={styles.arLookForText}>
+                            Look for: {cameraHighlight.description}
+                          </Text>
+                        </View>
+                      )}
                     </>
                   )}
-                </LinearGradient>
-              </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {/* Bottom controls */}
+            <View style={[styles.cameraBottom, { paddingBottom: insets.bottom + 20 }]}>
+              {!cameraHighlight ? (
+                <>
+                  <Text style={styles.cameraHint}>
+                    Looking for: {getItemName(selectedItem!)}
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.scanButton}
+                    onPress={handleCaptureScan}
+                    disabled={scanning}
+                  >
+                    <LinearGradient
+                      colors={['#1E90FF', '#00CBA9']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={styles.scanButtonGradient}
+                    >
+                      {scanning ? (
+                        <ActivityIndicator color="#fff" />
+                      ) : (
+                        <>
+                          <Ionicons name="scan" size={24} color="#fff" />
+                          <Text style={styles.scanButtonText}>Scan Location</Text>
+                        </>
+                      )}
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </>
+              ) : cameraHighlight.arrived ? (
+                <TouchableOpacity
+                  style={styles.scanButton}
+                  onPress={handleContinueToResults}
+                >
+                  <LinearGradient
+                    colors={['#10b981', '#059669']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.scanButtonGradient}
+                  >
+                    <Ionicons name="checkmark-circle" size={24} color="#fff" />
+                    <Text style={styles.scanButtonText}>View Details</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+              ) : (
+                <View style={styles.arButtonRow}>
+                  <TouchableOpacity
+                    style={[styles.scanButton, { flex: 1, marginRight: 8 }]}
+                    onPress={handleCaptureScan}
+                    disabled={scanning}
+                  >
+                    <LinearGradient
+                      colors={['#1E90FF', '#00CBA9']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={styles.scanButtonGradient}
+                    >
+                      {scanning ? (
+                        <ActivityIndicator color="#fff" />
+                      ) : (
+                        <>
+                          <Ionicons name="refresh" size={24} color="#fff" />
+                          <Text style={styles.scanButtonText}>Scan Again</Text>
+                        </>
+                      )}
+                    </LinearGradient>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.arSecondaryButton}
+                    onPress={handleContinueToResults}
+                  >
+                    <Ionicons name="document-text" size={20} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
           </View>
-        </CameraView>
-      </View>
-    );
-  }
+        </View>
+      );
+    }
 
   // ============================================
   // RENDER: Navigation modal
@@ -1031,6 +1524,43 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#fff',
   },
+  cameraHeaderCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  countdownContainer: {
+    width: 50,
+    height: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  countdownRing: {
+    position: 'absolute',
+    transform: [{ rotate: '-90deg' }],
+  },
+  countdownInner: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  scanningIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    borderRadius: 20,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  scanningText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '500',
+  },
   scanFrame: {
     width: SCREEN_WIDTH * 0.8,
     height: SCREEN_WIDTH * 0.8,
@@ -1070,6 +1600,20 @@ const styles = StyleSheet.create({
     borderBottomWidth: 4,
     borderRightWidth: 4,
   },
+
+  // Floor Arrow styles
+  floorArrowContainer: {
+    position: 'absolute',
+    bottom: SCREEN_HEIGHT * 0.28, // Position in lower third of screen
+    alignSelf: 'center',
+    // Add perspective effect
+    shadowColor: '#1E90FF',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.4,
+    shadowRadius: 16,
+    elevation: 8,
+  },
+
   cameraBottom: {
     paddingHorizontal: 20,
     alignItems: 'center',
@@ -1095,6 +1639,125 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#fff',
+  },
+
+  // AR Overlay styles
+  arHighlightBox: {
+    borderWidth: 3,
+    borderRadius: 16,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  arCorner: {
+    position: 'absolute',
+    width: 24,
+    height: 24,
+    borderWidth: 4,
+  },
+  arCornerTL: {
+    top: -2,
+    left: -2,
+    borderRightWidth: 0,
+    borderBottomWidth: 0,
+    borderTopLeftRadius: 12,
+  },
+  arCornerTR: {
+    top: -2,
+    right: -2,
+    borderLeftWidth: 0,
+    borderBottomWidth: 0,
+    borderTopRightRadius: 12,
+  },
+  arCornerBL: {
+    bottom: -2,
+    left: -2,
+    borderRightWidth: 0,
+    borderTopWidth: 0,
+    borderBottomLeftRadius: 12,
+  },
+  arCornerBR: {
+    bottom: -2,
+    right: -2,
+    borderLeftWidth: 0,
+    borderTopWidth: 0,
+    borderBottomRightRadius: 12,
+  },
+  arIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  arInstructionOverlay: {
+    position: 'absolute',
+    top: 100, // Moved to top, below header
+    left: 20,
+    right: 20,
+  },
+  arInstructionCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.6)', // 60% transparent
+    borderRadius: 16,
+    padding: 16,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 5,
+  },
+  arInstructionCardSuccess: {
+    backgroundColor: 'rgba(240, 253, 244, 0.7)', // 70% transparent green tint
+    borderWidth: 2,
+    borderColor: '#10b981',
+  },
+  arInstructionTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#10b981',
+    marginTop: 8,
+    textAlign: 'center',
+  },
+  arInstructionText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1e293b',
+    marginTop: 8,
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  arLookForBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(241, 245, 249, 0.7)', // Slightly transparent
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginTop: 12,
+    gap: 8,
+  },
+  arLookForText: {
+    fontSize: 14,
+    color: '#64748b',
+    flex: 1,
+  },
+  arButtonRow: {
+    flexDirection: 'row',
+    width: '100%',
+    alignItems: 'center',
+  },
+  arSecondaryButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 
   // Navigation view

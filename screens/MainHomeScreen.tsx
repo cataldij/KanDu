@@ -83,6 +83,14 @@ const ACTION_CARDS: ActionCard[] = [
     gradient: ['#FF8B5E', '#FFB84D'], // Softened orange → yellow
     route: 'DoIt',
   },
+  {
+    id: 'test',
+    icon: 'flask',
+    label: 'Store Test',
+    subtext: 'Test scraping',
+    gradient: ['#8b5cf6', '#ec4899'], // Purple → pink
+    route: 'StoreScrapingTest',
+  },
 ];
 
 function getStatusColor(status: string): string {

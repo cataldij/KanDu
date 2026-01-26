@@ -3,13 +3,9 @@
  * Uses Gemini to suggest recipes based on user preferences
  */
 
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts';
-import { GoogleGenerativeAI, SchemaType } from 'https://esm.sh/@google/generative-ai@0.21.0';
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+import { GoogleGenerativeAI, SchemaType } from 'https://esm.sh/@google/generative-ai@0.24.1';
+import { corsHeaders, handleCors } from '../_shared/cors.ts';
+import { errorResponse } from '../_shared/auth.ts';
 
 // Response schema for structured output
 const recipeSchema = {
@@ -61,19 +57,35 @@ const recipeSchema = {
   required: ['recipes'],
 };
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   // Handle CORS preflight
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', { headers: corsHeaders });
+  const corsResponse = handleCors(req);
+  if (corsResponse) return corsResponse;
+
+  // Only accept POST
+  if (req.method !== 'POST') {
+    return errorResponse('Method not allowed', 405);
   }
 
   try {
+    console.log('[suggest-recipes] Function started');
+
     const apiKey = Deno.env.get('GEMINI_API_KEY');
     if (!apiKey) {
-      throw new Error('GEMINI_API_KEY not configured');
+      console.error('[suggest-recipes] GEMINI_API_KEY not configured');
+      return errorResponse('Service configuration error', 500);
     }
 
-    const { mealType, servings, energy, mood, cuisine, specificDish, surprise } = await req.json();
+    let body;
+    try {
+      body = await req.json();
+      console.log('[suggest-recipes] Request body:', JSON.stringify(body));
+    } catch (parseErr) {
+      console.error('[suggest-recipes] Failed to parse request body:', parseErr);
+      return errorResponse('Invalid request body', 400);
+    }
+
+    const { mealType, servings, energy, mood, cuisine, specificDish, surprise } = body;
 
     // Build the prompt based on inputs
     let promptContext = `You are a helpful cooking assistant. Suggest recipes based on the following preferences:
@@ -138,33 +150,50 @@ IMPORTANT: Return ONLY the JSON response, no additional text.`;
     // Initialize Gemini
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({
-      model: 'gemini-2.0-flash-exp',
+      model: 'gemini-2.0-flash',
       generationConfig: {
         responseMimeType: 'application/json',
         responseSchema: recipeSchema,
-        temperature: 0.8, // A bit creative for recipe variety
       },
     });
 
     console.log('[suggest-recipes] Generating recipes with params:', { mealType, servings, energy, mood, cuisine, specificDish, surprise });
+    console.log('[suggest-recipes] Prompt length:', prompt.length);
 
-    const result = await model.generateContent(prompt);
-    const response = result.response;
-    const text = response.text();
+    let result;
+    try {
+      result = await model.generateContent(prompt);
+    } catch (geminiError) {
+      console.error('[suggest-recipes] Gemini API error:', geminiError);
+      const errorMessage = geminiError instanceof Error ? geminiError.message : 'Gemini API failed';
+      return errorResponse(`AI analysis failed: ${errorMessage}`, 500);
+    }
 
-    console.log('[suggest-recipes] Raw response:', text.substring(0, 500));
+    const text = result.response.text();
+    console.log('[suggest-recipes] Raw response length:', text.length);
 
     // Parse the response
-    const data = JSON.parse(text);
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (parseError) {
+      console.error('[suggest-recipes] JSON parse error:', parseError);
+      console.error('[suggest-recipes] Raw text that failed to parse:', text.substring(0, 500));
+      return errorResponse('Failed to parse AI response', 500);
+    }
 
     if (!data.recipes || !Array.isArray(data.recipes)) {
-      throw new Error('Invalid response structure');
+      console.error('[suggest-recipes] Invalid response structure:', JSON.stringify(data).substring(0, 500));
+      return errorResponse('Invalid response structure from AI', 500);
     }
 
     console.log('[suggest-recipes] Successfully generated', data.recipes.length, 'recipes');
 
     return new Response(
-      JSON.stringify(data),
+      JSON.stringify({
+        success: true,
+        ...data,
+      }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 200,
@@ -172,16 +201,10 @@ IMPORTANT: Return ONLY the JSON response, no additional text.`;
     );
 
   } catch (error) {
-    console.error('[suggest-recipes] Error:', error);
-    return new Response(
-      JSON.stringify({
-        error: error instanceof Error ? error.message : 'Unknown error',
-        recipes: [],
-      }),
-      {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        status: 500,
-      }
+    console.error('[suggest-recipes] Unexpected error:', error);
+    return errorResponse(
+      error instanceof Error ? error.message : 'Internal server error',
+      500
     );
   }
 });

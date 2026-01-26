@@ -23,9 +23,13 @@ interface ScanRequest {
 
 interface NavigationResponse {
   location_identified: string;
+  guest_facing_angle?: number; // 0, 45, 90, 135, 180, 225, 270, 315
+  destination_angle?: number;  // 0, 45, 90, 135, 180, 225, 270, 315
   facing_direction?: 'front' | 'right' | 'back' | 'left' | 'exit' | null;
   confidence: number;
   next_instruction: string;
+  // Direction arrow for AR floor guidance
+  move_direction?: 'forward' | 'left' | 'right' | 'slight_left' | 'slight_right' | 'back' | 'arrived' | null;
   highlight?: {
     description: string;
     region?: { x: number; y: number; width: number; height: number };
@@ -257,6 +261,16 @@ Deno.serve(async (req) => {
         const homeBaseImages = kit.home_base_images || [];
         const hasKitchenScan = homeBaseImages.length > 0;
 
+        // Debug logging for kitchen scan
+        console.log(`[scan-navigate] Kit ID: ${kitId}`);
+        console.log(`[scan-navigate] home_base_images count: ${homeBaseImages.length}`);
+        console.log(`[scan-navigate] home_base_scan_complete: ${kit.home_base_scan_complete}`);
+        if (homeBaseImages.length > 0) {
+          console.log(`[scan-navigate] First image angle: ${homeBaseImages[0]?.angle}, url: ${homeBaseImages[0]?.url?.substring(0, 60)}...`);
+        } else {
+          console.log(`[scan-navigate] WARNING: No kitchen reference images found!`);
+        }
+
         // Zone-based navigation data
         const pathwayImages = zone?.pathway_images || [];
         const zoneImages = zone?.zone_images || [];
@@ -287,14 +301,18 @@ NAVIGATION ROUTE:
         let kitchenContext = '';
         if (hasKitchenScan) {
           const angleDescriptions = homeBaseImages.map((img: { angle: string; description?: string }) => {
-            const angleName = img.angle === 'front' ? 'FRONT' :
-                             img.angle === 'right' ? 'RIGHT (90° CW)' :
+            const angleName = img.angle === 'front' ? 'FRONT (0°)' :
+                             img.angle === 'front_right' ? 'FRONT-RIGHT (45°)' :
+                             img.angle === 'right' ? 'RIGHT (90°)' :
+                             img.angle === 'back_right' ? 'BACK-RIGHT (135°)' :
                              img.angle === 'back' ? 'BACK (180°)' :
-                             img.angle === 'left' ? 'LEFT (90° CCW)' :
+                             img.angle === 'back_left' ? 'BACK-LEFT (225°)' :
+                             img.angle === 'left' ? 'LEFT (270°)' :
+                             img.angle === 'front_left' ? 'FRONT-LEFT (315°)' :
                              img.angle === 'exit' ? 'EXIT DOORWAY' : img.angle;
             return `  - ${angleName}`;
           }).join('\n');
-          kitchenContext = `\n\nKITCHEN (START POINT) - 360° Reference:\n${angleDescriptions}`;
+          kitchenContext = `\n\nKITCHEN (START POINT) - 360° Reference (8 compass angles + exit):\n${angleDescriptions}`;
         }
 
         // Build pathway context
@@ -316,35 +334,83 @@ NAVIGATION ROUTE:
         const prompt = `You are an AI navigation assistant helping a guest find the ${itemName} in someone's home.
 ${routeContext}${kitchenContext}${pathwayContext}${zoneContext}
 
+SPATIAL REASONING - CRITICAL:
+The 8 kitchen reference images form a 360° panorama from the CENTER of the kitchen:
+  FRONT (0°) → FRONT-RIGHT (45°) → RIGHT (90°) → BACK-RIGHT (135°) →
+  BACK (180°) → BACK-LEFT (225°) → LEFT (270°) → FRONT-LEFT (315°) → back to FRONT
+
+To navigate the guest:
+1. MATCH GUEST'S VIEW: Compare the guest's current camera view to the kitchen reference images. Identify which angle (0°, 45°, 90°, etc.) they are currently facing by matching visual features (counters, appliances, windows, doorways).
+
+2. FIND DESTINATION ANGLE: Look at ALL kitchen reference images. Which angle shows the ${itemName} or the path to it? The item may be visible on a wall, counter, or area captured in one of the 8 angles.
+
+3. CALCULATE TURN: Based on the angle difference between where the guest IS facing vs where they NEED to face:
+   - 0° difference = "forward" (already facing the right direction)
+   - 45° clockwise = "slight_right"
+   - 45° counter-clockwise = "slight_left"
+   - 90° clockwise = "right"
+   - 90° counter-clockwise = "left"
+   - 135-180° difference = "back" (turn around)
+
+IMPORTANT: If the ${itemName} is IN THE KITCHEN (visible in one of the kitchen reference angles), you should guide the guest to TURN WITHIN THE KITCHEN to face it - do NOT send them to another room unless the route specifically requires it.
+
 CURRENT STATUS:
 - Navigation step ${currentStep || 1} of ${totalSteps}
 
 I'm providing reference images in this order:
-${hasKitchenScan ? '1. Kitchen 360° scan (5 angles)\n' : ''}${hasPathway ? `2. Pathway waypoints (${pathwayImages.length} images)\n` : ''}${hasZoneScan ? `3. ${zone?.name} zone 360° scan (4 angles)\n` : ''}4. Guest's current camera view (ANALYZE THIS)
+${hasKitchenScan ? `1. Kitchen 360° scan (${homeBaseImages.length} angles - every 45°)\n` : ''}${hasPathway ? `2. Pathway waypoints (${pathwayImages.length} images)\n` : ''}${hasZoneScan ? `3. ${zone?.name} zone 360° scan (4 angles)\n` : ''}4. Guest's current camera view (ANALYZE THIS)
+
+The kitchen scan provides comprehensive 360° coverage at 45° intervals, so you should be able to match the guest's view to one or more reference angles.
 
 TASK:
 Analyze the guest's current camera view against the reference images to determine:
 1. WHERE they are on the route (kitchen, which waypoint, zone, or destination)
-2. Which direction they're facing (if identifiable)
-3. NEXT INSTRUCTION to move them forward on the route
-4. If they've ARRIVED at the ${itemName}
+2. Which ANGLE they're facing (match to nearest kitchen reference: 0°, 45°, 90°, 135°, 180°, 225°, 270°, or 315°)
+3. Which ANGLE shows the ${itemName} or the path to it
+4. NEXT INSTRUCTION: Calculate the turn needed based on angle difference
+5. If they've ARRIVED at the ${itemName}
 
 Respond with JSON only:
 {
   "location_identified": "kitchen" | "waypoint_1" | "waypoint_2" | ... | "zone" | "destination" | "unknown",
   "location_name": "Human-readable location name",
+  "guest_facing_angle": 0 | 45 | 90 | 135 | 180 | 225 | 270 | 315 (which kitchen reference angle matches the guest's current view),
+  "destination_angle": 0 | 45 | 90 | 135 | 180 | 225 | 270 | 315 (which kitchen reference angle shows the ${itemName} or path to it),
   "facing_direction": "front" | "right" | "back" | "left" | null,
   "confidence": 0.0-1.0,
   "route_progress": "on_track" | "ahead" | "behind" | "lost",
   "next_instruction": "Clear, specific instruction for what to do next",
+  "move_direction": "forward" | "left" | "right" | "slight_left" | "slight_right" | "back" | "arrived",
   "highlight": {
-    "description": "What visual landmark to look for"
+    "description": "What visual landmark to look for or what the user should see",
+    "region": {
+      "x": 0.0-1.0 (normalized horizontal center position in camera view, 0=left edge, 1=right edge),
+      "y": 0.0-1.0 (normalized vertical center position in camera view, 0=top, 1=bottom),
+      "width": 0.0-1.0 (normalized width of highlight box),
+      "height": 0.0-1.0 (normalized height of highlight box)
+    }
   },
   "warning": null or "Safety warning if applicable",
   "arrived": true/false,
   "step_number": ${currentStep || 1},
   "total_steps": ${totalSteps}
-}`;
+}
+
+IMPORTANT for "move_direction":
+- This controls an AR arrow shown on the floor of the camera view
+- "forward" = walk straight ahead in the direction they're facing
+- "left" = turn left (90°) then walk
+- "right" = turn right (90°) then walk
+- "slight_left" = turn slightly left (45°) then walk
+- "slight_right" = turn slightly right (45°) then walk
+- "back" = turn around (180°) and walk
+- "arrived" = they've reached the destination, no arrow needed
+
+IMPORTANT for "highlight.region":
+- If you can identify the target item (${itemName}) or a relevant landmark in the guest's current camera view, provide the REGION coordinates where it appears.
+- Coordinates are NORMALIZED (0.0 to 1.0) relative to the image dimensions.
+- For example, if the fire extinguisher is visible in the center-right of the image: x=0.7, y=0.5, width=0.15, height=0.25
+- If you cannot identify a specific region to highlight, omit the "region" field but still provide "description".`;
 
         try {
           // Create image part from guest's current camera view
@@ -358,49 +424,90 @@ Respond with JSON only:
           // Build content array with prompt and all reference images
           const contentParts: Array<string | { inlineData: { data: string; mimeType: string } }> = [prompt];
 
-          // Helper to add image from URL
-          const addImageFromUrl = async (url: string, label: string) => {
+          // Helper to fetch and convert image to base64 (returns null on failure)
+          const fetchImageAsBase64 = async (url: string, label: string): Promise<{ base64: string; label: string } | null> => {
             try {
               const imgResponse = await fetch(url);
               if (imgResponse.ok) {
                 const imgBuffer = await imgResponse.arrayBuffer();
-                const imgBase64 = btoa(String.fromCharCode(...new Uint8Array(imgBuffer)));
-                contentParts.push({
-                  inlineData: { data: imgBase64, mimeType: 'image/jpeg' },
-                });
-                contentParts.push(`[REFERENCE: ${label}]`);
+                // Use chunked approach to avoid stack overflow with large images
+                const bytes = new Uint8Array(imgBuffer);
+                let binary = '';
+                const chunkSize = 8192;
+                for (let i = 0; i < bytes.length; i += chunkSize) {
+                  const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+                  binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+                }
+                const base64 = btoa(binary);
+                console.log(`[scan-navigate] Fetched: ${label} (${bytes.length} bytes)`);
+                return { base64, label };
               }
             } catch (e) {
               console.log(`Could not fetch image: ${label}`, e);
             }
+            return null;
           };
 
-          // 1. Add kitchen reference images
-          if (hasKitchenScan) {
+          // PARALLEL FETCH: Gather all image fetch promises
+          console.log(`[scan-navigate] Starting parallel fetch of all reference images...`);
+          const fetchStart = Date.now();
+
+          const kitchenFetches = hasKitchenScan
+            ? homeBaseImages.filter((img: { url?: string }) => img.url).map((img: { url: string; angle: string }) =>
+                fetchImageAsBase64(img.url, `Kitchen ${img.angle.toUpperCase()}`)
+              )
+            : [];
+
+          const pathwayFetches = hasPathway
+            ? pathwayImages.filter((wp: { url?: string }) => wp.url).map((wp: { url: string; sequence: number; label: string }) =>
+                fetchImageAsBase64(wp.url, `Waypoint ${wp.sequence}: ${wp.label}`)
+              )
+            : [];
+
+          const zoneFetches = (zone && hasZoneScan)
+            ? zoneImages.filter((img: { url?: string }) => img.url).map((img: { url: string; angle: string }) =>
+                fetchImageAsBase64(img.url, `${zone.name} ${img.angle.toUpperCase()}`)
+              )
+            : [];
+
+          // Fetch ALL images in parallel
+          const [kitchenResults, pathwayResults, zoneResults] = await Promise.all([
+            Promise.all(kitchenFetches),
+            Promise.all(pathwayFetches),
+            Promise.all(zoneFetches),
+          ]);
+
+          console.log(`[scan-navigate] Parallel fetch complete in ${Date.now() - fetchStart}ms`);
+
+          // 1. Add kitchen reference images (in order)
+          if (hasKitchenScan && kitchenResults.length > 0) {
             contentParts.push('\n--- KITCHEN (START) REFERENCE IMAGES ---');
-            for (const img of homeBaseImages) {
-              if (img.url) {
-                await addImageFromUrl(img.url, `Kitchen ${img.angle.toUpperCase()}`);
+            for (const result of kitchenResults) {
+              if (result) {
+                contentParts.push({ inlineData: { data: result.base64, mimeType: 'image/jpeg' } });
+                contentParts.push(`[REFERENCE: ${result.label}]`);
               }
             }
           }
 
-          // 2. Add pathway waypoint images
-          if (hasPathway) {
+          // 2. Add pathway waypoint images (in order)
+          if (hasPathway && pathwayResults.length > 0) {
             contentParts.push('\n--- PATHWAY WAYPOINT IMAGES ---');
-            for (const wp of pathwayImages) {
-              if (wp.url) {
-                await addImageFromUrl(wp.url, `Waypoint ${wp.sequence}: ${wp.label}`);
+            for (const result of pathwayResults) {
+              if (result) {
+                contentParts.push({ inlineData: { data: result.base64, mimeType: 'image/jpeg' } });
+                contentParts.push(`[REFERENCE: ${result.label}]`);
               }
             }
           }
 
-          // 3. Add zone reference images
-          if (zone && hasZoneScan) {
+          // 3. Add zone reference images (in order)
+          if (zone && hasZoneScan && zoneResults.length > 0) {
             contentParts.push(`\n--- ${zone.name.toUpperCase()} ZONE REFERENCE IMAGES ---`);
-            for (const img of zoneImages) {
-              if (img.url) {
-                await addImageFromUrl(img.url, `${zone.name} ${img.angle.toUpperCase()}`);
+            for (const result of zoneResults) {
+              if (result) {
+                contentParts.push({ inlineData: { data: result.base64, mimeType: 'image/jpeg' } });
+                contentParts.push(`[REFERENCE: ${result.label}]`);
               }
             }
           }

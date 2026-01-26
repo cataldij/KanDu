@@ -1050,7 +1050,7 @@ Give a brief, helpful answer (2-3 sentences max). Be warm, conversational, and s
         <KeyboardAvoidingView
           style={styles.chatOverlay}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          keyboardVerticalOffset={0}
+          keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
         >
           <TouchableOpacity
             style={styles.chatBackdrop}
@@ -1060,6 +1060,7 @@ Give a brief, helpful answer (2-3 sentences max). Be warm, conversational, and s
           <Animated.View
             style={[
               styles.chatContainer,
+              { paddingBottom: insets.bottom },
               {
                 transform: [{
                   translateY: chatInputAnim.interpolate({
@@ -1731,16 +1732,13 @@ const styles = StyleSheet.create({
   chatOverlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 200,
+    justifyContent: 'flex-end',
   },
   chatBackdrop: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
   },
   chatContainer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
     maxHeight: SCREEN_HEIGHT * 0.6,
     minHeight: 300,
   },

@@ -28,7 +28,7 @@ import * as Clipboard from 'expo-clipboard';
 import { listGuestKits, deleteGuestKit, GuestKit } from '../services/api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const BASE_URL = 'https://kandu.app/g/';
+const BASE_URL = 'https://getkandu.com/g/';
 
 export default function GuestModeScreen() {
   const insets = useSafeAreaInsets();

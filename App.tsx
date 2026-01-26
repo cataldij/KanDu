@@ -28,6 +28,7 @@ import AddSafetyItemScreen from './screens/AddSafetyItemScreen';
 import GuestLinkViewScreen from './screens/GuestLinkViewScreen';
 import ShoppingListScreen from './screens/ShoppingListScreen';
 import RecipesScreen from './screens/RecipesScreen';
+import StoreScrapingTestScreen from './screens/StoreScrapingTestScreen';
 import StartupCinematicOverlay from './components/StartupCinematicOverlay';
 
 export type RootStackParamList = {
@@ -88,6 +89,7 @@ export type RootStackParamList = {
   GuestLinkView: { slug: string };
   ShoppingList: { listId?: string };
   Recipes: undefined;
+  StoreScrapingTest: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -256,6 +258,14 @@ function AppNavigator() {
         component={RecipesScreen}
         options={{
           title: 'Recipes',
+          headerShown: false,
+        }}
+      />
+      <Stack.Screen
+        name="StoreScrapingTest"
+        component={StoreScrapingTestScreen}
+        options={{
+          title: 'Store Scraping Test',
           headerShown: false,
         }}
       />

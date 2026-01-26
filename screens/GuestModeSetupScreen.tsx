@@ -30,6 +30,7 @@ import {
   createGuestKit,
   updateGuestKit,
   getGuestKit,
+  listGuestKits,
   getGuestKitZones,
   createGuestKitZone,
   updateGuestKitZone,
@@ -144,8 +145,43 @@ export default function GuestModeSetupScreen() {
   useEffect(() => {
     if (editMode && kitId) {
       loadExistingKit();
+    } else {
+      // Pre-populate from most recent kit for faster setup
+      prefillFromExistingKit();
     }
   }, [editMode, kitId]);
+
+  const prefillFromExistingKit = async () => {
+    try {
+      const result = await listGuestKits();
+      if (result.data?.kits && result.data.kits.length > 0) {
+        // Use the most recent kit to pre-fill property-level fields
+        const latestKit = result.data.kits[0];
+        setData((prev) => ({
+          ...prev,
+          // Pre-fill contact info
+          homeowner_name: latestKit.homeowner_name || '',
+          homeowner_phone: latestKit.homeowner_phone || '',
+          show_phone_to_guest: latestKit.show_phone_to_guest ?? true,
+          // Pre-fill property info
+          wifi_network: latestKit.wifi_network || '',
+          wifi_password: latestKit.wifi_password || '',
+          address: latestKit.address || '',
+          show_address: latestKit.show_address ?? false,
+          // Pre-fill rental-specific info
+          checkin_instructions: latestKit.checkin_instructions || '',
+          checkout_instructions: latestKit.checkout_instructions || '',
+          house_rules: latestKit.house_rules || '',
+          // REUSE the kitchen scan - it's the same kitchen!
+          home_base_images: (latestKit.home_base_images as KitchenImage[]) || [],
+          home_base_scan_complete: latestKit.home_base_scan_complete ?? false,
+          home_base_description: latestKit.home_base_description || 'Kitchen',
+        }));
+      }
+    } catch (err) {
+      console.log('No existing kits to prefill from:', err);
+    }
+  };
 
   const loadExistingKit = async () => {
     setLoading(true);
@@ -569,6 +605,10 @@ export default function GuestModeSetupScreen() {
   );
 
   const handleGuidedScanComplete = (images: KitchenImage[]) => {
+    console.log('[GuestModeSetup] Received images from scan:', images.length);
+    images.forEach((img, i) => {
+      console.log(`  [${i}] ${img.angle}: ${img.url?.substring(0, 80)}`);
+    });
     setData((prev) => ({
       ...prev,
       home_base_images: images,
@@ -614,12 +654,31 @@ export default function GuestModeSetupScreen() {
 
           {/* Preview grid of captured images */}
           <View style={styles.scanPreviewGrid}>
-            {data.home_base_images.slice(0, 4).map((img, idx) => (
-              <View key={idx} style={styles.scanPreviewItem}>
-                <Image source={{ uri: img.url }} style={styles.scanPreviewImage} />
-                <Text style={styles.scanPreviewLabel}>{img.description}</Text>
-              </View>
-            ))}
+            {data.home_base_images.slice(0, 4).map((img, idx) => {
+              console.log(`[Preview] Image ${idx}: ${img.angle} - ${img.url?.substring(0, 50)}...`);
+              return (
+                <View key={idx} style={styles.scanPreviewItem}>
+                  {/* Placeholder background */}
+                  <View style={styles.scanPreviewPlaceholder}>
+                    <Ionicons name="image-outline" size={32} color="#94a3b8" />
+                    <Text style={styles.scanPreviewPlaceholderText}>Loading...</Text>
+                  </View>
+                  {/* Actual image */}
+                  {img.url && (
+                    <Image
+                      source={{ uri: img.url }}
+                      style={[styles.scanPreviewImage, { position: 'absolute', top: 0, left: 0 }]}
+                      onError={(e) => console.error(`[Preview] Image load error for ${img.angle}:`, e.nativeEvent.error)}
+                      onLoad={() => console.log(`[Preview] Image loaded: ${img.angle}`)}
+                    />
+                  )}
+                  <View style={styles.scanPreviewLabelContainer}>
+                    <Ionicons name="camera" size={12} color="#fff" />
+                    <Text style={styles.scanPreviewLabelText}>{img.description || img.angle}</Text>
+                  </View>
+                </View>
+              );
+            })}
           </View>
 
           <TouchableOpacity
@@ -1381,15 +1440,49 @@ const styles = StyleSheet.create({
   },
   scanPreviewItem: {
     width: (SCREEN_WIDTH - 80) / 2,
-    height: 80,
-    borderRadius: 8,
+    height: 120,
+    borderRadius: 12,
     overflow: 'hidden',
-    backgroundColor: '#f1f5f9',
+    backgroundColor: '#e2e8f0',
+    borderWidth: 2,
+    borderColor: '#cbd5e1',
   },
   scanPreviewImage: {
     width: '100%',
     height: '100%',
     resizeMode: 'cover',
+  },
+  scanPreviewLabelContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingVertical: 6,
+  },
+  scanPreviewLabelText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  scanPreviewPlaceholder: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#e2e8f0',
+  },
+  scanPreviewPlaceholderText: {
+    marginTop: 4,
+    fontSize: 10,
+    color: '#94a3b8',
   },
   scanPreviewLabel: {
     position: 'absolute',

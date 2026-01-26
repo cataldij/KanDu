@@ -12,7 +12,6 @@ import {
   ScrollView,
   TouchableOpacity,
   TextInput,
-  ActivityIndicator,
   Dimensions,
   KeyboardAvoidingView,
   Platform,
@@ -21,7 +20,9 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
+import Svg, { Path } from 'react-native-svg';
 import { suggestRecipes, RecipeSuggestion } from '../services/api';
+import AnimatedLogo from './AnimatedLogo';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -78,6 +79,9 @@ export default function RecipeDiscovery({
   const [selectedRecipe, setSelectedRecipe] = useState<RecipeSuggestion | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [manualItemInput, setManualItemInput] = useState('');
+  const [showManualInput, setShowManualInput] = useState(false);
+  const [customItems, setCustomItems] = useState<string[]>([]);
 
   // Handle mood selection
   const handleMoodSelect = async (moodId: string) => {
@@ -183,6 +187,27 @@ export default function RecipeDiscovery({
     }).map(ing => ing.name);
   };
 
+  // Handle adding a manual item
+  const handleAddManualItem = () => {
+    if (!manualItemInput.trim()) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setCustomItems(prev => [...prev, manualItemInput.trim()]);
+    setManualItemInput('');
+  };
+
+  // Handle removing a custom item
+  const handleRemoveCustomItem = (item: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setCustomItems(prev => prev.filter(i => i !== item));
+  };
+
+  // Handle quick-add single ingredient to custom items
+  const handleQuickAddIngredient = (ingredientName: string) => {
+    if (customItems.includes(ingredientName)) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setCustomItems(prev => [...prev, ingredientName]);
+  };
+
   // Render craving selection screen
   const renderCravingScreen = () => (
     <ScrollView
@@ -191,12 +216,6 @@ export default function RecipeDiscovery({
       showsVerticalScrollIndicator={false}
       keyboardShouldPersistTaps="handled"
     >
-      {/* Header */}
-      <Text style={styles.mainTitle}>What are you craving?</Text>
-      <Text style={styles.subtitle}>
-        {mealType} for {servings} • {energy} effort
-      </Text>
-
       {/* Mood Section */}
       <Text style={styles.sectionTitle}>MOOD</Text>
       <View style={styles.moodGrid}>
@@ -304,14 +323,8 @@ export default function RecipeDiscovery({
   // Render loading screen
   const renderLoadingScreen = () => (
     <View style={styles.loadingContainer}>
-      <ActivityIndicator size="large" color={accentColor} />
+      <AnimatedLogo size={120} isLoading={true} />
       <Text style={styles.loadingText}>Finding perfect recipes...</Text>
-      <Text style={styles.loadingSubtext}>
-        {selectedMood && `Looking for ${selectedMood} food`}
-        {selectedCuisine && `Exploring ${selectedCuisine} cuisine`}
-        {searchQuery && `Searching for "${searchQuery}"`}
-        {!selectedMood && !selectedCuisine && !searchQuery && 'Picking something great'}
-      </Text>
     </View>
   );
 
@@ -322,11 +335,6 @@ export default function RecipeDiscovery({
       contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 20 }]}
       showsVerticalScrollIndicator={false}
     >
-      <Text style={styles.suggestionsTitle}>Here's what I suggest</Text>
-      <Text style={styles.suggestionsSubtitle}>
-        Tap a recipe to see ingredients
-      </Text>
-
       {suggestions.map((recipe, index) => (
         <TouchableOpacity
           key={index}
@@ -334,10 +342,7 @@ export default function RecipeDiscovery({
           onPress={() => handleRecipeSelect(recipe)}
           activeOpacity={0.7}
         >
-          <LinearGradient
-            colors={['rgba(255,255,255,0.08)', 'rgba(255,255,255,0.03)']}
-            style={styles.recipeCardGradient}
-          >
+          <View style={styles.recipeCardGradient}>
             <View style={styles.recipeCardHeader}>
               <Text style={styles.recipeCardEmoji}>{recipe.emoji || '🍽️'}</Text>
               <View style={styles.recipeCardInfo}>
@@ -353,7 +358,7 @@ export default function RecipeDiscovery({
                 {recipe.description}
               </Text>
             )}
-          </LinearGradient>
+          </View>
         </TouchableOpacity>
       ))}
 
@@ -384,25 +389,20 @@ export default function RecipeDiscovery({
         contentContainerStyle={[styles.scrollContent, { paddingBottom: insets.bottom + 100 }]}
         showsVerticalScrollIndicator={false}
       >
-        {/* Recipe Header */}
+        {/* Recipe emoji and servings info */}
         <View style={styles.detailHeader}>
           <Text style={styles.detailEmoji}>{selectedRecipe.emoji || '🍽️'}</Text>
-          <Text style={styles.detailName}>{selectedRecipe.name}</Text>
-          <View style={styles.detailMeta}>
-            <View style={styles.detailMetaItem}>
-              <Ionicons name="time-outline" size={16} color="#94a3b8" />
-              <Text style={styles.detailMetaText}>
-                {selectedRecipe.prepTime + selectedRecipe.cookTime} min
-              </Text>
-            </View>
-            <View style={styles.detailMetaItem}>
-              <Ionicons name="speedometer-outline" size={16} color="#94a3b8" />
-              <Text style={styles.detailMetaText}>{selectedRecipe.difficulty}</Text>
-            </View>
+          <View style={styles.detailMetaRow}>
             <View style={styles.detailMetaItem}>
               <Ionicons name="people-outline" size={16} color="#94a3b8" />
               <Text style={styles.detailMetaText}>{selectedRecipe.servings} servings</Text>
             </View>
+            {selectedRecipe.cuisine && (
+              <View style={styles.detailMetaItem}>
+                <Ionicons name="restaurant-outline" size={16} color="#94a3b8" />
+                <Text style={styles.detailMetaText}>{selectedRecipe.cuisine}</Text>
+              </View>
+            )}
           </View>
         </View>
 
@@ -416,24 +416,36 @@ export default function RecipeDiscovery({
         <View style={styles.ingredientsList}>
           {selectedRecipe.ingredients.map((ing, index) => {
             const isLikelyHave = !missingIngredients.includes(ing.name);
+            const isInCustomList = customItems.includes(ing.name);
             return (
               <View key={index} style={styles.ingredientItem}>
                 <View style={[
                   styles.ingredientCheck,
-                  isLikelyHave ? styles.ingredientCheckHave : styles.ingredientCheckNeed,
+                  isLikelyHave ? styles.ingredientCheckHave :
+                  isInCustomList ? styles.ingredientCheckAdded : styles.ingredientCheckNeed,
                 ]}>
                   <Ionicons
-                    name={isLikelyHave ? 'checkmark' : 'add'}
+                    name={isLikelyHave ? 'checkmark' : isInCustomList ? 'cart' : 'add'}
                     size={14}
-                    color={isLikelyHave ? '#22c55e' : '#f59e0b'}
+                    color={isLikelyHave ? '#22c55e' : isInCustomList ? '#3b82f6' : '#f59e0b'}
                   />
                 </View>
                 <Text style={styles.ingredientName}>
                   {ing.quantity} {ing.unit} {ing.name}
                 </Text>
-                <Text style={styles.ingredientStatus}>
-                  {isLikelyHave ? 'likely have' : 'may need'}
-                </Text>
+                {isLikelyHave ? (
+                  <Text style={styles.ingredientStatus}>likely have</Text>
+                ) : isInCustomList ? (
+                  <Text style={[styles.ingredientStatus, styles.ingredientStatusAdded]}>in list</Text>
+                ) : (
+                  <TouchableOpacity
+                    style={styles.quickAddButton}
+                    onPress={() => handleQuickAddIngredient(ing.name)}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Ionicons name="cart-outline" size={16} color="#f59e0b" />
+                  </TouchableOpacity>
+                )}
               </View>
             );
           })}
@@ -442,21 +454,77 @@ export default function RecipeDiscovery({
         {/* Status Banner */}
         <View style={[
           styles.statusBanner,
-          hasAllIngredients ? styles.statusBannerGood : styles.statusBannerNeed,
+          hasAllIngredients && customItems.length === 0 ? styles.statusBannerGood : styles.statusBannerNeed,
         ]}>
           <Ionicons
-            name={hasAllIngredients ? 'checkmark-circle' : 'cart'}
+            name={hasAllIngredients && customItems.length === 0 ? 'checkmark-circle' : 'cart'}
             size={24}
-            color={hasAllIngredients ? '#22c55e' : '#f59e0b'}
+            color={hasAllIngredients && customItems.length === 0 ? '#22c55e' : '#f59e0b'}
           />
           <Text style={[
             styles.statusBannerText,
-            hasAllIngredients ? styles.statusBannerTextGood : styles.statusBannerTextNeed,
+            hasAllIngredients && customItems.length === 0 ? styles.statusBannerTextGood : styles.statusBannerTextNeed,
           ]}>
-            {hasAllIngredients
+            {hasAllIngredients && customItems.length === 0
               ? 'You likely have everything!'
-              : `You may need ${missingIngredients.length} items`}
+              : `You may need ${missingIngredients.length + customItems.length} items`}
           </Text>
+        </View>
+
+        {/* Manual Item Addition */}
+        <View style={styles.manualAddSection}>
+          <TouchableOpacity
+            style={styles.addItemToggle}
+            onPress={() => setShowManualInput(!showManualInput)}
+          >
+            <Ionicons name={showManualInput ? 'remove-circle' : 'add-circle'} size={20} color="#f59e0b" />
+            <Text style={styles.addItemToggleText}>
+              {showManualInput ? 'Hide' : 'Add your own items'}
+            </Text>
+          </TouchableOpacity>
+
+          {showManualInput && (
+            <View style={styles.manualInputContainer}>
+              <View style={styles.manualInputWrapper}>
+                <TextInput
+                  style={styles.manualInput}
+                  placeholder="Add an item..."
+                  placeholderTextColor="#64748b"
+                  value={manualItemInput}
+                  onChangeText={setManualItemInput}
+                  onSubmitEditing={handleAddManualItem}
+                  returnKeyType="done"
+                />
+                <TouchableOpacity
+                  style={[styles.manualAddButton, !manualItemInput.trim() && styles.manualAddButtonDisabled]}
+                  onPress={handleAddManualItem}
+                  disabled={!manualItemInput.trim()}
+                >
+                  <Ionicons name="add" size={20} color="#fff" />
+                </TouchableOpacity>
+              </View>
+
+              {/* Custom items list */}
+              {customItems.length > 0 && (
+                <View style={styles.customItemsList}>
+                  {customItems.map((item, index) => (
+                    <View key={index} style={styles.customItem}>
+                      <View style={styles.customItemCheck}>
+                        <Ionicons name="add" size={14} color="#f59e0b" />
+                      </View>
+                      <Text style={styles.customItemName}>{item}</Text>
+                      <TouchableOpacity
+                        onPress={() => handleRemoveCustomItem(item)}
+                        style={styles.customItemRemove}
+                      >
+                        <Ionicons name="close-circle" size={20} color="#ef4444" />
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          )}
         </View>
       </ScrollView>
     );
@@ -467,20 +535,23 @@ export default function RecipeDiscovery({
     if (!selectedRecipe || step !== 'detail') return null;
 
     const missingIngredients = getMissingIngredients(selectedRecipe);
+    const allItemsToAdd = [...missingIngredients, ...customItems];
+    const totalItems = allItemsToAdd.length;
 
     return (
       <View style={[styles.detailActions, { paddingBottom: insets.bottom + 16 }]}>
-        {missingIngredients.length > 0 && (
+        {totalItems > 0 && (
           <TouchableOpacity
             style={styles.addToListButton}
             onPress={() => {
               Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-              onAddToShoppingList(selectedRecipe, missingIngredients);
+              onAddToShoppingList(selectedRecipe, allItemsToAdd);
+              setCustomItems([]); // Clear custom items after adding
             }}
             activeOpacity={0.8}
           >
             <Ionicons name="cart-outline" size={20} color="#f59e0b" />
-            <Text style={styles.addToListText}>Add {missingIngredients.length} to list</Text>
+            <Text style={styles.addToListText}>Add {totalItems} to list</Text>
           </TouchableOpacity>
         )}
         <TouchableOpacity
@@ -508,32 +579,81 @@ export default function RecipeDiscovery({
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
+      {/* Hero gradient header */}
       <LinearGradient
-        colors={['#1a1a2e', '#16213e']}
-        style={StyleSheet.absoluteFill}
-      />
+        colors={['#0f172a', '#1e3a5f', '#2d3a4f', '#1a1a2e']}
+        locations={[0, 0.3, 0.7, 1]}
+        start={{ x: 0.5, y: 0 }}
+        end={{ x: 0.5, y: 1 }}
+        style={[styles.heroGradient, { paddingTop: insets.top }]}
+      >
+        {/* Glass sheen */}
+        <LinearGradient
+          colors={[
+            'rgba(255,255,255,0.25)',
+            'rgba(255,255,255,0.10)',
+            'rgba(255,255,255,0.00)',
+          ]}
+          locations={[0, 0.45, 1]}
+          start={{ x: 0.2, y: 0 }}
+          end={{ x: 0.8, y: 1 }}
+          style={StyleSheet.absoluteFill}
+          pointerEvents="none"
+        />
 
-      {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top + 12 }]}>
-        <TouchableOpacity onPress={handleBack} style={styles.backButton}>
-          <Ionicons name="arrow-back" size={24} color="#fff" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>
-          {step === 'craving' && 'Find a Recipe'}
-          {step === 'loading' && 'Searching...'}
-          {step === 'suggestions' && 'Recipe Ideas'}
-          {step === 'detail' && 'Recipe Details'}
-        </Text>
-        <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-          <Ionicons name="close" size={24} color="#fff" />
-        </TouchableOpacity>
-      </View>
+        {/* Ghost checkmark watermark */}
+        <View style={styles.headerCheckmark} pointerEvents="none">
+          <Svg width={600} height={300} viewBox="25 30 50 30">
+            <Path
+              d="M38 46 L46 54 L62 38"
+              fill="none"
+              stroke="rgba(255, 255, 255, 0.08)"
+              strokeWidth={6}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </Svg>
+        </View>
+
+        {/* Top navigation row */}
+        <View style={styles.headerNav}>
+          <TouchableOpacity onPress={handleBack} style={styles.backButton}>
+            <Ionicons name="arrow-back" size={24} color="#fff" />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+            <Ionicons name="close" size={24} color="#fff" />
+          </TouchableOpacity>
+        </View>
+
+        {/* Hero title in gradient */}
+        <View style={styles.heroTitle}>
+          <Text style={styles.heroTitleText}>
+            {step === 'craving' && 'What are you craving?'}
+            {step === 'loading' && 'Searching...'}
+            {step === 'suggestions' && 'Here\'s what I suggest'}
+            {step === 'detail' && selectedRecipe?.name || 'Recipe Details'}
+          </Text>
+          <Text style={styles.heroSubtitle}>
+            {step === 'craving' && `${mealType} for ${servings} • ${energy} effort`}
+            {step === 'loading' && (
+              selectedMood ? `Looking for ${selectedMood} food` :
+              selectedCuisine ? `Exploring ${selectedCuisine} cuisine` :
+              searchQuery ? `Searching for "${searchQuery}"` :
+              'Picking something great'
+            )}
+            {step === 'suggestions' && 'Tap a recipe to see ingredients'}
+            {step === 'detail' && selectedRecipe && `${selectedRecipe.prepTime + selectedRecipe.cookTime} min • ${selectedRecipe.difficulty}`}
+          </Text>
+        </View>
+      </LinearGradient>
 
       {/* Content */}
-      {step === 'craving' && renderCravingScreen()}
-      {step === 'loading' && renderLoadingScreen()}
-      {step === 'suggestions' && renderSuggestionsScreen()}
-      {step === 'detail' && renderDetailScreen()}
+      <View style={styles.contentArea}>
+        {step === 'craving' && renderCravingScreen()}
+        {step === 'loading' && renderLoadingScreen()}
+        {step === 'suggestions' && renderSuggestionsScreen()}
+        {step === 'detail' && renderDetailScreen()}
+      </View>
 
       {/* Bottom Actions */}
       {renderDetailActions()}
@@ -544,24 +664,61 @@ export default function RecipeDiscovery({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#1a1a2e',
   },
-  header: {
+  heroGradient: {
+    paddingHorizontal: 20,
+    paddingBottom: 60,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  headerCheckmark: {
+    position: 'absolute',
+    top: -50,
+    right: -150,
+  },
+  headerNav: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingBottom: 16,
+    paddingTop: 12,
   },
   backButton: {
-    padding: 8,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#fff',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   closeButton: {
-    padding: 8,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  heroTitle: {
+    marginTop: 20,
+    alignItems: 'center',
+  },
+  heroTitleText: {
+    fontSize: 28,
+    fontWeight: '700',
+    color: '#fff',
+    textAlign: 'center',
+  },
+  heroSubtitle: {
+    fontSize: 15,
+    color: 'rgba(255,255,255,0.7)',
+    textAlign: 'center',
+    marginTop: 8,
+    textTransform: 'capitalize',
+  },
+  contentArea: {
+    flex: 1,
+    marginTop: -30,
   },
   scrollView: {
     flex: 1,
@@ -571,20 +728,6 @@ const styles = StyleSheet.create({
   },
 
   // Craving Screen
-  mainTitle: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: '#fff',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 15,
-    color: '#94a3b8',
-    textAlign: 'center',
-    marginBottom: 32,
-    textTransform: 'capitalize',
-  },
   sectionTitle: {
     fontSize: 12,
     fontWeight: '700',
@@ -748,31 +891,15 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: '#fff',
-    marginTop: 20,
-  },
-  loadingSubtext: {
-    fontSize: 14,
-    color: '#94a3b8',
-    marginTop: 8,
-    textTransform: 'capitalize',
+    marginTop: 16,
   },
 
   // Suggestions
-  suggestionsTitle: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#fff',
-    marginBottom: 8,
-  },
-  suggestionsSubtitle: {
-    fontSize: 14,
-    color: '#94a3b8',
-    marginBottom: 24,
-  },
   recipeCard: {
     marginBottom: 12,
     borderRadius: 16,
     overflow: 'hidden',
+    backgroundColor: 'rgba(255,255,255,0.06)',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
   },
@@ -822,30 +949,23 @@ const styles = StyleSheet.create({
   // Detail Screen
   detailHeader: {
     alignItems: 'center',
-    marginBottom: 24,
-  },
-  detailEmoji: {
-    fontSize: 64,
     marginBottom: 16,
   },
-  detailName: {
-    fontSize: 26,
-    fontWeight: '700',
-    color: '#fff',
-    textAlign: 'center',
+  detailEmoji: {
+    fontSize: 56,
     marginBottom: 12,
   },
-  detailMeta: {
+  detailMetaRow: {
     flexDirection: 'row',
-    gap: 16,
+    gap: 20,
   },
   detailMetaItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
+    gap: 6,
   },
   detailMetaText: {
-    fontSize: 13,
+    fontSize: 14,
     color: '#94a3b8',
   },
   detailDescription: {
@@ -888,6 +1008,9 @@ const styles = StyleSheet.create({
   ingredientCheckNeed: {
     backgroundColor: 'rgba(245,158,11,0.2)',
   },
+  ingredientCheckAdded: {
+    backgroundColor: 'rgba(59,130,246,0.2)',
+  },
   ingredientName: {
     flex: 1,
     fontSize: 15,
@@ -896,6 +1019,17 @@ const styles = StyleSheet.create({
   ingredientStatus: {
     fontSize: 12,
     color: '#64748b',
+  },
+  ingredientStatusAdded: {
+    color: '#3b82f6',
+  },
+  quickAddButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(245,158,11,0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   // Status Banner
@@ -922,6 +1056,80 @@ const styles = StyleSheet.create({
   },
   statusBannerTextNeed: {
     color: '#f59e0b',
+  },
+
+  // Manual Add Section
+  manualAddSection: {
+    marginTop: 16,
+  },
+  addItemToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    padding: 12,
+  },
+  addItemToggleText: {
+    fontSize: 15,
+    color: '#f59e0b',
+    fontWeight: '500',
+  },
+  manualInputContainer: {
+    marginTop: 8,
+  },
+  manualInputWrapper: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  manualInput: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
+    color: '#fff',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  manualAddButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#f59e0b',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  manualAddButtonDisabled: {
+    opacity: 0.5,
+  },
+  customItemsList: {
+    marginTop: 12,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 12,
+    padding: 4,
+  },
+  customItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    gap: 12,
+  },
+  customItemCheck: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(245,158,11,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customItemName: {
+    flex: 1,
+    fontSize: 15,
+    color: '#fff',
+  },
+  customItemRemove: {
+    padding: 4,
   },
 
   // Detail Actions

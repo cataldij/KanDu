@@ -74,10 +74,21 @@
       "Bash(gh repo create:*)",
       "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" auth status)",
       "Bash(\"C:\\\\Program Files\\\\GitHub CLI\\\\gh.exe\" auth refresh -h github.com -s workflow)",
-      "Bash(node scripts/run-migration.js:*)"
+      "Bash(node scripts/run-migration.js:*)",
+      "Bash(vercel login)",
+      "Bash(vercel:*)",
+      "Bash(cd:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx vercel:*)",
+      "WebFetch(domain:conference-os.vercel.app)",
+      "WebFetch(domain:vercel.com)",
+      "Bash(Select-String -Pattern \"signIn|signInBrowser|About to redirect\")",
+      "WebFetch(domain:conference-p201djd3x-jons-projects-d505589b.vercel.app)",
+      "Bash(eas channel:list:*)"
     ],
     "additionalDirectories": [
-      "c:\\Users\\socce\\OneDrive\\Documents\\kandu-fresh\\screens"
+      "c:\\Users\\socce\\OneDrive\\Documents\\kandu-fresh\\screens",
+      "c:\\Users\\socce\\OneDrive\\Documents\\conference-os"
     ]
   }
 }

@@ -789,6 +789,8 @@ export interface NavigationResponse {
   location_identified: string;
   confidence: number;
   next_instruction: string;
+  // Direction for AR floor arrow
+  move_direction?: 'forward' | 'left' | 'right' | 'slight_left' | 'slight_right' | 'back' | 'arrived' | null;
   highlight?: {
     description: string;
     region?: { x: number; y: number; width: number; height: number };
@@ -1089,6 +1091,9 @@ export interface ShoppingList {
   created_at: string;
   updated_at: string;
   completed_at?: string;
+  // Budget tracking (Phase 1 feature)
+  budget?: number | null;
+  currency?: string;
   // Computed fields (calculated on fetch)
   item_count?: number;
   completed_count?: number;
@@ -1608,6 +1613,168 @@ export async function createShoppingListFromScan(
   }
 }
 
+/**
+ * Duplicate a shopping list with all its items (for "Shop Again" feature)
+ */
+export async function duplicateShoppingList(
+  listId: string,
+  newName?: string
+): Promise<ApiResult<ShoppingList>> {
+  try {
+    // 1. Fetch original list and its items
+    const listResult = await getShoppingList(listId);
+    if (listResult.error || !listResult.data) {
+      return { data: null, error: listResult.error || 'List not found' };
+    }
+
+    const itemsResult = await getShoppingListItems(listId);
+    if (itemsResult.error) {
+      return { data: null, error: itemsResult.error };
+    }
+
+    const originalList = listResult.data;
+    const originalItems = itemsResult.data || [];
+
+    // 2. Create new list with new name
+    const listName = newName || `${originalList.name} (Copy)`;
+    const newListResult = await createShoppingList(
+      listName,
+      originalList.list_type,
+      originalList.description || undefined
+    );
+
+    if (newListResult.error || !newListResult.data) {
+      return { data: null, error: newListResult.error || 'Failed to create list' };
+    }
+
+    const newList = newListResult.data;
+
+    // 3. Copy all items from original (unchecked)
+    if (originalItems.length > 0) {
+      const itemsToAdd: Array<{
+        item_name: string;
+        category?: string;
+        quantity?: string;
+        estimated_price?: number;
+        notes?: string;
+        priority?: string;
+        is_tool?: boolean;
+      }> = originalItems.map(item => ({
+        item_name: item.item_name,
+        category: item.category || undefined,
+        quantity: item.quantity || undefined,
+        estimated_price: item.estimated_price || undefined,
+        notes: item.notes || undefined,
+        priority: item.priority || undefined,
+        is_tool: item.is_tool || false,
+      }));
+
+      const addItemsResult = await addShoppingListItems(newList.id, itemsToAdd);
+      if (addItemsResult.error) {
+        // List created but items failed - still return the list
+        console.error('Failed to copy items:', addItemsResult.error);
+      }
+    }
+
+    // 4. Return new list
+    return { data: newList, error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Get frequently bought items from user's shopping history
+ */
+export async function getFrequentlyBoughtItems(
+  limit: number = 10
+): Promise<ApiResult<Array<{ item_name: string; count: number; category?: string }>>> {
+  try {
+    const { data, error } = await supabase
+      .rpc('get_frequently_bought_items', {
+        item_limit: limit,
+        days_back: 90,
+      });
+
+    if (error) {
+      // If RPC doesn't exist yet, fall back to manual query
+      console.warn('RPC not available, using fallback query:', error);
+
+      const { data: fallbackData, error: fallbackError } = await supabase
+        .from('shopping_list_items')
+        .select(`
+          item_name,
+          category,
+          shopping_lists!inner(user_id)
+        `)
+        .gte('created_at', new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString())
+        .limit(100);
+
+      if (fallbackError) {
+        return { data: null, error: fallbackError.message };
+      }
+
+      // Count occurrences manually
+      const counts = new Map<string, { count: number; category?: string }>();
+      fallbackData?.forEach(item => {
+        const key = item.item_name.toLowerCase();
+        const existing = counts.get(key);
+        if (existing) {
+          existing.count++;
+        } else {
+          counts.set(key, { count: 1, category: item.category || undefined });
+        }
+      });
+
+      // Sort by count and take top N
+      const sorted = Array.from(counts.entries())
+        .map(([name, data]) => ({
+          item_name: name,
+          count: data.count,
+          category: data.category,
+        }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, limit);
+
+      return { data: sorted, error: null };
+    }
+
+    return { data: data || [], error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Update budget for a shopping list
+ */
+export async function updateShoppingListBudget(
+  listId: string,
+  budget: number | null,
+  currency: string = 'USD'
+): Promise<ApiResult<ShoppingList>> {
+  try {
+    const { data, error } = await supabase
+      .from('shopping_lists')
+      .update({
+        budget: budget,
+        currency: currency,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', listId)
+      .select()
+      .single();
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data: data as ShoppingList, error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
 // ============================================
 // RECIPE TRACKING TYPES
 // ============================================
@@ -1981,6 +2148,59 @@ export async function deleteRecipe(recipeId: string): Promise<ApiResult<boolean>
 
     return { data: true, error: null };
   } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+// ============================================
+// SMART SORTING FUNCTIONS
+// ============================================
+
+export interface SortedItem {
+  name: string;
+  section: string;
+  sectionOrder: number;
+  reasoning?: string;
+}
+
+export interface SmartSortResult {
+  sortedItems: SortedItem[];
+  sections: string[];
+  originalCount: number;
+  sortedCount: number;
+}
+
+/**
+ * Smart sort shopping list items by typical store layout
+ * Uses Gemini to organize items by sections (Produce → Frozen)
+ */
+export async function smartSortShoppingList(
+  items: string[],
+  storeType?: 'grocery' | 'walmart' | 'target' | 'kroger' | 'whole_foods'
+): Promise<ApiResult<SmartSortResult>> {
+  try {
+    console.log('[API] smartSortShoppingList called with:', { items, storeType });
+
+    const { data, error } = await supabase.functions.invoke('smart-sort-list', {
+      body: { items, storeType },
+    });
+
+    console.log('[API] smartSortShoppingList response:', { data, error });
+
+    if (error) {
+      console.error('[API] Smart sort error:', error);
+      return { data: null, error: error.message || JSON.stringify(error) };
+    }
+
+    if (!data?.sortedItems || !Array.isArray(data.sortedItems)) {
+      console.error('[API] Invalid sort response:', data);
+      return { data: null, error: 'Invalid response from smart sort' };
+    }
+
+    console.log('[API] Smart sort success:', data.sortedItems.length, 'items');
+    return { data: data, error: null };
+  } catch (error) {
+    console.error('[API] Smart sort exception:', error);
     return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
   }
 }

@@ -149,24 +149,25 @@ export default function AddSafetyItemScreen() {
     loadZonesAndItem();
   }, [kitId, editMode, itemId]);
 
+  // Debug state
+  const [debugInfo, setDebugInfo] = useState('Loading...');
+
   // Fetch signed URLs whenever image URLs change
   useEffect(() => {
     const fetchSignedUrls = async () => {
       const newSignedUrls: typeof signedUrls = {};
+      let debug = '';
 
       if (data.destination_image_url) {
+        debug += `Stored: ${data.destination_image_url.substring(0, 50)}...\n`;
         const signed = await getSignedImageUrl(data.destination_image_url);
+        debug += `Signed: ${signed ? signed.substring(0, 50) + '...' : 'FAILED'}\n`;
         if (signed) newSignedUrls.destination_image_url = signed;
-      }
-      if (data.control_image_url) {
-        const signed = await getSignedImageUrl(data.control_image_url);
-        if (signed) newSignedUrls.control_image_url = signed;
-      }
-      if (data.overview_image_url) {
-        const signed = await getSignedImageUrl(data.overview_image_url);
-        if (signed) newSignedUrls.overview_image_url = signed;
+      } else {
+        debug += 'No destination_image_url in data\n';
       }
 
+      setDebugInfo(debug);
       setSignedUrls(newSignedUrls);
     };
 
@@ -473,6 +474,12 @@ export default function AddSafetyItemScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
+        {/* DEBUG BANNER */}
+        <View style={{ backgroundColor: '#fef3c7', padding: 12, borderRadius: 8, marginBottom: 16, borderWidth: 1, borderColor: '#f59e0b' }}>
+          <Text style={{ fontSize: 12, fontWeight: '700', color: '#92400e', marginBottom: 4 }}>DEBUG INFO:</Text>
+          <Text style={{ fontSize: 10, color: '#78350f', fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace' }}>{debugInfo}</Text>
+        </View>
+
         <View style={styles.selectedItemHeader}>
           <LinearGradient
             colors={['#1E90FF', '#00CBA9']}

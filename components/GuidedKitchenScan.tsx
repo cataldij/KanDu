@@ -19,11 +19,13 @@ import {
   Dimensions,
   Animated,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import Svg, { Path, Circle, G } from 'react-native-svg';
+import { supabase } from '../services/supabase';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -96,10 +98,63 @@ export default function GuidedKitchenScan({
   const [currentStep, setCurrentStep] = useState(0);
   const [capturedImages, setCapturedImages] = useState<KitchenImage[]>(existingImages);
   const [isCapturing, setIsCapturing] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const cameraRef = useRef<CameraView>(null);
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const rotateAnim = useRef(new Animated.Value(0)).current;
+
+  // Upload image to Supabase storage
+  const uploadImageToStorage = async (localUri: string, angle: string): Promise<string | null> => {
+    try {
+      console.log(`[KitchenScan] Uploading ${angle} image...`);
+
+      // Fetch the local file
+      const response = await fetch(localUri);
+      const blob = await response.blob();
+
+      // Convert blob to ArrayBuffer (React Native fix)
+      const arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          if (reader.result instanceof ArrayBuffer) {
+            resolve(reader.result);
+          } else {
+            reject(new Error('Failed to read blob as ArrayBuffer'));
+          }
+        };
+        reader.onerror = reject;
+        reader.readAsArrayBuffer(blob);
+      });
+
+      const fileName = `kitchen-${angle}-${Date.now()}.jpg`;
+      const filePath = `kitchen-scans/${fileName}`;
+
+      console.log(`[KitchenScan] Uploading to ${filePath}, size: ${arrayBuffer.byteLength} bytes`);
+
+      const { error: uploadError } = await supabase.storage
+        .from('images')
+        .upload(filePath, arrayBuffer, {
+          contentType: 'image/jpeg',
+          upsert: true,
+        });
+
+      if (uploadError) {
+        console.error('[KitchenScan] Upload error:', uploadError);
+        return null;
+      }
+
+      const { data: urlData } = supabase.storage
+        .from('images')
+        .getPublicUrl(filePath);
+
+      console.log(`[KitchenScan] Upload success: ${urlData.publicUrl}`);
+      return urlData.publicUrl;
+    } catch (err) {
+      console.error('[KitchenScan] Upload failed:', err);
+      return null;
+    }
+  };
 
   // Pulse animation for capture button
   useEffect(() => {
@@ -135,7 +190,7 @@ export default function GuidedKitchenScan({
   }, [currentStep]);
 
   const handleCapture = async () => {
-    if (!cameraRef.current || isCapturing) return;
+    if (!cameraRef.current || isCapturing || isUploading) return;
 
     setIsCapturing(true);
     try {
@@ -146,8 +201,18 @@ export default function GuidedKitchenScan({
 
       if (photo?.uri) {
         const step = SCAN_STEPS[currentStep];
+
+        // Upload to Supabase storage
+        setIsUploading(true);
+        const cloudUrl = await uploadImageToStorage(photo.uri, step.angle);
+        setIsUploading(false);
+
+        if (!cloudUrl) {
+          console.error('[KitchenScan] Failed to upload, using local URI as fallback');
+        }
+
         const newImage: KitchenImage = {
-          url: photo.uri,
+          url: cloudUrl || photo.uri, // Use cloud URL, fallback to local
           angle: step.angle,
           description: step.title,
         };
@@ -173,6 +238,7 @@ export default function GuidedKitchenScan({
       console.error('Failed to capture:', err);
     } finally {
       setIsCapturing(false);
+      setIsUploading(false);
     }
   };
 
@@ -403,13 +469,15 @@ export default function GuidedKitchenScan({
               <TouchableOpacity
                 style={[
                   styles.captureButton,
-                  isCapturing && styles.captureButtonDisabled,
+                  (isCapturing || isUploading) && styles.captureButtonDisabled,
                 ]}
                 onPress={handleCapture}
-                disabled={isCapturing}
+                disabled={isCapturing || isUploading}
               >
                 <View style={styles.captureButtonInner}>
-                  {existingCapture ? (
+                  {isUploading ? (
+                    <ActivityIndicator size="large" color="#1E5AA8" />
+                  ) : existingCapture ? (
                     <Ionicons name="refresh" size={32} color="#1E5AA8" />
                   ) : (
                     <Ionicons name="camera" size={32} color="#1E5AA8" />
@@ -420,7 +488,7 @@ export default function GuidedKitchenScan({
 
             {/* Progress text */}
             <Text style={styles.progressText}>
-              {currentStep + 1} of {SCAN_STEPS.length}
+              {isUploading ? 'Uploading...' : `${currentStep + 1} of ${SCAN_STEPS.length}`}
             </Text>
           </LinearGradient>
         </CameraView>

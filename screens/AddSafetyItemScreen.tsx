@@ -36,7 +36,7 @@ import {
   GuestKitZone,
   ZONE_TYPES,
 } from '../services/api';
-import { supabase } from '../services/supabase';
+import { supabase, getSignedImageUrl } from '../services/supabase';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -138,9 +138,40 @@ export default function AddSafetyItemScreen() {
     zone_id: undefined,
   });
 
+  // Signed URLs for displaying images (works better on mobile)
+  const [signedUrls, setSignedUrls] = useState<{
+    overview_image_url?: string;
+    destination_image_url?: string;
+    control_image_url?: string;
+  }>({});
+
   useEffect(() => {
     loadZonesAndItem();
   }, [kitId, editMode, itemId]);
+
+  // Fetch signed URLs whenever image URLs change
+  useEffect(() => {
+    const fetchSignedUrls = async () => {
+      const newSignedUrls: typeof signedUrls = {};
+
+      if (data.destination_image_url) {
+        const signed = await getSignedImageUrl(data.destination_image_url);
+        if (signed) newSignedUrls.destination_image_url = signed;
+      }
+      if (data.control_image_url) {
+        const signed = await getSignedImageUrl(data.control_image_url);
+        if (signed) newSignedUrls.control_image_url = signed;
+      }
+      if (data.overview_image_url) {
+        const signed = await getSignedImageUrl(data.overview_image_url);
+        if (signed) newSignedUrls.overview_image_url = signed;
+      }
+
+      setSignedUrls(newSignedUrls);
+    };
+
+    fetchSignedUrls();
+  }, [data.destination_image_url, data.control_image_url, data.overview_image_url]);
 
   const loadZonesAndItem = async () => {
     setLoading(true);
@@ -162,6 +193,10 @@ export default function AddSafetyItemScreen() {
         if (result.data) {
           const item = result.data.items.find((i) => i.id === itemId);
           if (item) {
+            console.log('[AddSafetyItem] Loading existing item:', item.item_type);
+            console.log('[AddSafetyItem] destination_image_url:', item.destination_image_url);
+            console.log('[AddSafetyItem] control_image_url:', item.control_image_url);
+            console.log('[AddSafetyItem] overview_image_url:', item.overview_image_url);
             setData({
               item_type: item.item_type,
               custom_name: item.custom_name || '',
@@ -313,7 +348,12 @@ export default function AddSafetyItemScreen() {
     required = false
   ) => {
     const imageUrl = data[field];
+    const displayUrl = signedUrls[field] || imageUrl; // Use signed URL for display
     const isUploading = uploadingImage === field;
+
+    // Debug logging
+    console.log(`[AddSafetyItem] ${field} stored: ${imageUrl?.substring(0, 60) || 'empty'}`);
+    console.log(`[AddSafetyItem] ${field} signed: ${displayUrl?.substring(0, 60) || 'empty'}`);
 
     return (
       <View style={styles.inputGroup}>
@@ -324,14 +364,23 @@ export default function AddSafetyItemScreen() {
 
         {imageUrl ? (
           <View style={styles.imagePreviewContainer}>
-            <Image
-              source={{ uri: imageUrl }}
-              style={styles.imagePreview}
-              resizeMode="cover"
-            />
+            {displayUrl ? (
+              <Image
+                source={{ uri: displayUrl }}
+                style={{ width: '100%', height: 160, borderRadius: 16 }}
+                resizeMode="cover"
+                onError={(e) => console.error('[Image] Error:', field, e.nativeEvent.error)}
+                onLoad={() => console.log('[Image] Loaded:', field)}
+              />
+            ) : (
+              <View style={styles.imagePlaceholder}>
+                <ActivityIndicator color="#1E90FF" />
+                <Text style={styles.imagePlaceholderText}>Loading...</Text>
+              </View>
+            )}
             <TouchableOpacity
               style={styles.removeImageButton}
-              onPress={() => updateData(field, null)}
+              onPress={() => updateData(field, undefined)}
             >
               <Ionicons name="close-circle" size={28} color="#ef4444" />
             </TouchableOpacity>
@@ -937,11 +986,35 @@ const styles = StyleSheet.create({
     position: 'relative',
     borderRadius: 16,
     overflow: 'hidden',
+    height: 160,
+    backgroundColor: '#e2e8f0',
+  },
+  imagePlaceholder: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#e2e8f0',
+    zIndex: 1,
+  },
+  imagePlaceholderText: {
+    marginTop: 8,
+    fontSize: 12,
+    color: '#94a3b8',
   },
   imagePreview: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     width: '100%',
-    height: 160,
+    height: '100%',
     borderRadius: 16,
+    zIndex: 2,
   },
   removeImageButton: {
     position: 'absolute',
@@ -949,6 +1022,7 @@ const styles = StyleSheet.create({
     right: 8,
     backgroundColor: '#fff',
     borderRadius: 14,
+    zIndex: 10,
   },
   imagePickerButtons: {
     flexDirection: 'row',

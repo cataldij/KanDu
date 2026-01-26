@@ -31,9 +31,10 @@ import {
   GuestKitItem,
   GuestKitItemType,
 } from '../services/api';
+import { getSignedImageUrl } from '../services/supabase';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
-const BASE_URL = 'https://kandu.app/g/';
+const BASE_URL = 'https://getkandu.com/g/';
 
 // Priority colors
 const PRIORITY_COLORS: Record<string, readonly [string, string]> = {
@@ -61,6 +62,26 @@ export default function GuestKitDetailScreen() {
   const [itemTypes, setItemTypes] = useState<Record<string, GuestKitItemType>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
+
+  // Fetch signed URLs for all item images
+  React.useEffect(() => {
+    const fetchSignedUrls = async () => {
+      const urls: Record<string, string> = {};
+      for (const item of items) {
+        if (item.destination_image_url && !signedUrls[item.id]) {
+          const signed = await getSignedImageUrl(item.destination_image_url);
+          if (signed) urls[item.id] = signed;
+        }
+      }
+      if (Object.keys(urls).length > 0) {
+        setSignedUrls((prev) => ({ ...prev, ...urls }));
+      }
+    };
+    if (items.length > 0) {
+      fetchSignedUrls();
+    }
+  }, [items]);
 
   const loadKit = async () => {
     setLoading(true);
@@ -242,7 +263,7 @@ export default function GuestKitDetailScreen() {
         <View style={styles.itemCardRight}>
           {item.destination_image_url && (
             <Image
-              source={{ uri: item.destination_image_url }}
+              source={{ uri: signedUrls[item.id] || item.destination_image_url }}
               style={styles.itemThumbnail}
               resizeMode="cover"
             />

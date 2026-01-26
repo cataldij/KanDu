@@ -62,8 +62,7 @@ import ItemQuantityStepper from '../components/ItemQuantityStepper';
 import ShoppingListBudgetCard from '../components/ShoppingListBudgetCard';
 import QuickAddBar from '../components/QuickAddBar';
 import ArchivedListsModal from '../components/ArchivedListsModal';
-// BarcodeScanner temporarily removed - requires native build
-// import BarcodeScanner from '../components/BarcodeScanner';
+// BarcodeScanner removed - requires native build
 
 // Speech recognition (optional - requires dev build)
 let ExpoSpeechRecognitionModule: any = null;
@@ -209,9 +208,6 @@ export default function ShoppingListScreen() {
   // Phase 2: Smart Suggestions (autocomplete as user types)
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
-
-  // Phase 3A: Barcode Scanner
-  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
 
   // Phase 3B: Drag to Reorder
   const [reorderMode, setReorderMode] = useState(false);
@@ -1173,71 +1169,6 @@ export default function ShoppingListScreen() {
     }
   };
 
-  // Phase 3A: Barcode Scanner - handle barcode scanned
-  const handleBarcodeScanned = async (barcode: string) => {
-    if (!selectedList) return;
-
-    console.log('[BarcodeScanner] Scanned barcode:', barcode);
-
-    try {
-      // Check if this barcode matches any items in the current list
-      const matchingItem = items.find(item => item.barcode === barcode);
-
-      if (matchingItem) {
-        // Item found! Mark as checked (got it)
-        await handleToggleItem(matchingItem);
-        Alert.alert('Item Found!', `Checked off: ${matchingItem.item_name}`);
-      } else {
-        // Barcode not in list - check if we've seen it before
-        const { data, error } = await supabase
-          .from('shopping_list_items')
-          .select('item_name')
-          .eq('barcode', barcode)
-          .limit(1);
-
-        if (error) throw error;
-
-        if (data && data.length > 0) {
-          // We've seen this barcode before - suggest adding it
-          Alert.alert(
-            'Item Not In List',
-            `This looks like "${data[0].item_name}". Would you like to add it to your list?`,
-            [
-              { text: 'No', style: 'cancel' },
-              {
-                text: 'Add',
-                onPress: async () => {
-                  setNewItemName(data[0].item_name);
-                  setShowBarcodeScanner(false);
-                  setAddingItem(true);
-                },
-              },
-            ]
-          );
-        } else {
-          // Never seen this barcode - let user name it
-          Alert.alert(
-            'Unknown Barcode',
-            'This barcode is not in your list. Would you like to add a new item with this barcode?',
-            [
-              { text: 'No', style: 'cancel' },
-              {
-                text: 'Add Item',
-                onPress: () => {
-                  setShowBarcodeScanner(false);
-                  setAddingItem(true);
-                },
-              },
-            ]
-          );
-        }
-      }
-    } catch (error) {
-      console.error('[BarcodeScanner] Error processing barcode:', error);
-      Alert.alert('Error', 'Failed to process barcode');
-    }
-  };
-
   // Render ghost checkmark watermark in hero gradient (KanDu brand style - same as MainHomeScreen)
   const renderHeroWatermark = () => (
     <View style={styles.heroWatermark} pointerEvents="none">
@@ -1848,21 +1779,6 @@ export default function ShoppingListScreen() {
                   color={shoppingMode ? "#10B981" : "#ffffff"}
                 />
               </TouchableOpacity>
-
-              {/* Barcode Scanner Button (Phase 3A) - temporarily disabled - requires native build
-              {shoppingMode && (
-                <TouchableOpacity
-                  style={styles.heroAction}
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                    setShowBarcodeScanner(true);
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <Ionicons name="barcode-outline" size={22} color="#ffffff" />
-                </TouchableOpacity>
-              )}
-              */}
 
               {/* Reorder Mode Toggle (Phase 3B) - only when NOT smart-sorted */}
               {!isSorted && !shoppingMode && (
@@ -2890,19 +2806,6 @@ export default function ShoppingListScreen() {
             </View>
           </View>
         </Modal>
-
-        {/* Barcode Scanner Modal - Phase 3A (temporarily disabled - requires native build)
-        <Modal
-          visible={showBarcodeScanner}
-          animationType="slide"
-          onRequestClose={() => setShowBarcodeScanner(false)}
-        >
-          <BarcodeScanner
-            onBarcodeScanned={handleBarcodeScanned}
-            onClose={() => setShowBarcodeScanner(false)}
-          />
-        </Modal>
-        */}
       </View>
     );
   };

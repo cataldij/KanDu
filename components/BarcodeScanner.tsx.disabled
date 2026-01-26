@@ -1,0 +1,206 @@
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { BarCodeScanner, BarCodeScannerResult } from 'expo-barcode-scanner';
+import { Ionicons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
+
+interface BarcodeScannerProps {
+  onBarcodeScanned: (barcode: string) => void;
+  onClose: () => void;
+}
+
+export default function BarcodeScanner({ onBarcodeScanned, onClose }: BarcodeScannerProps) {
+  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+  const [scanned, setScanned] = useState(false);
+
+  useEffect(() => {
+    requestCameraPermission();
+  }, []);
+
+  const requestCameraPermission = async () => {
+    const { status } = await BarCodeScanner.requestPermissionsAsync();
+    setHasPermission(status === 'granted');
+  };
+
+  const handleBarCodeScanned = ({ type, data }: BarCodeScannerResult) => {
+    if (scanned) return;
+
+    setScanned(true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+    console.log(`[BarcodeScanner] Scanned ${type}: ${data}`);
+    onBarcodeScanned(data);
+
+    // Reset after 2 seconds to allow scanning another item
+    setTimeout(() => setScanned(false), 2000);
+  };
+
+  if (hasPermission === null) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.text}>Requesting camera permission...</Text>
+      </View>
+    );
+  }
+
+  if (hasPermission === false) {
+    return (
+      <View style={styles.container}>
+        <Ionicons name="camera-off" size={64} color="rgba(255,255,255,0.5)" />
+        <Text style={styles.text}>No access to camera</Text>
+        <Text style={styles.subtext}>
+          Please enable camera permissions in your device settings to use the barcode scanner.
+        </Text>
+        <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+          <Text style={styles.closeButtonText}>Close</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <BarCodeScanner
+        onBarCodeScanned={scanned ? undefined : handleBarCodeScanned}
+        style={StyleSheet.absoluteFillObject}
+      />
+
+      {/* Scanning overlay */}
+      <View style={styles.overlay}>
+        <View style={styles.topOverlay} />
+        <View style={styles.middleRow}>
+          <View style={styles.sideOverlay} />
+          <View style={styles.scanArea}>
+            <View style={[styles.corner, styles.topLeft]} />
+            <View style={[styles.corner, styles.topRight]} />
+            <View style={[styles.corner, styles.bottomLeft]} />
+            <View style={[styles.corner, styles.bottomRight]} />
+          </View>
+          <View style={styles.sideOverlay} />
+        </View>
+        <View style={styles.bottomOverlay}>
+          <View style={styles.instructionsContainer}>
+            <Ionicons name="barcode-outline" size={32} color="#ffffff" />
+            <Text style={styles.instructions}>
+              {scanned ? 'Item scanned!' : 'Point camera at barcode'}
+            </Text>
+            {scanned && (
+              <Ionicons name="checkmark-circle" size={24} color="#10B981" />
+            )}
+          </View>
+
+          <TouchableOpacity style={styles.closeButton} onPress={onClose}>
+            <Ionicons name="close" size={24} color="#ffffff" />
+            <Text style={styles.closeButtonText}>Close Scanner</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#000000',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  topOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  middleRow: {
+    flexDirection: 'row',
+    height: 250,
+  },
+  sideOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+  },
+  scanArea: {
+    width: 250,
+    position: 'relative',
+  },
+  corner: {
+    position: 'absolute',
+    width: 30,
+    height: 30,
+    borderColor: '#ffffff',
+    borderWidth: 3,
+  },
+  topLeft: {
+    top: 0,
+    left: 0,
+    borderRightWidth: 0,
+    borderBottomWidth: 0,
+  },
+  topRight: {
+    top: 0,
+    right: 0,
+    borderLeftWidth: 0,
+    borderBottomWidth: 0,
+  },
+  bottomLeft: {
+    bottom: 0,
+    left: 0,
+    borderRightWidth: 0,
+    borderTopWidth: 0,
+  },
+  bottomRight: {
+    bottom: 0,
+    right: 0,
+    borderLeftWidth: 0,
+    borderTopWidth: 0,
+  },
+  bottomOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  instructionsContainer: {
+    alignItems: 'center',
+    marginBottom: 32,
+    gap: 12,
+  },
+  instructions: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#ffffff',
+    textAlign: 'center',
+  },
+  text: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#ffffff',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  subtext: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.7)',
+    textAlign: 'center',
+    marginBottom: 24,
+    paddingHorizontal: 32,
+    lineHeight: 20,
+  },
+  closeButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    gap: 8,
+  },
+  closeButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#ffffff',
+  },
+});

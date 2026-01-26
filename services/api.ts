@@ -1119,6 +1119,7 @@ export interface ShoppingListItem {
   notes?: string;
   substitute_for?: string;
   display_order: number;
+  barcode?: string; // Phase 3A: Barcode scanner support
   created_at: string;
   updated_at: string;
 }
@@ -1396,7 +1397,7 @@ export async function deleteShoppingListItem(
  */
 export async function updateShoppingListItem(
   itemId: string,
-  updates: { item_name?: string; priority?: ItemPriority; quantity?: string; notes?: string }
+  updates: { item_name?: string; priority?: ItemPriority; quantity?: string; notes?: string; display_order?: number }
 ): Promise<ApiResult<ShoppingListItem>> {
   try {
     const { data, error } = await supabase
@@ -1770,6 +1771,111 @@ export async function updateShoppingListBudget(
     }
 
     return { data: data as ShoppingList, error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+// ============================================
+// REAL-TIME COLLABORATION (Phase 3B, Feature #10)
+// ============================================
+
+export interface ShoppingListMember {
+  id: string;
+  list_id: string;
+  user_id: string;
+  role: 'owner' | 'editor' | 'viewer';
+  added_at: string;
+  added_by: string | null;
+}
+
+/**
+ * Share a shopping list with another user by email
+ */
+export async function shareShoppingList(
+  listId: string,
+  email: string,
+  role: 'editor' | 'viewer' = 'editor'
+): Promise<ApiResult<ShoppingListMember>> {
+  try {
+    // First, find the user by email
+    const { data: userData, error: userError } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('email', email)
+      .single();
+
+    if (userError || !userData) {
+      return { data: null, error: 'User not found with that email' };
+    }
+
+    // Add the user as a member
+    const { data, error } = await supabase
+      .from('shopping_list_members')
+      .insert({
+        list_id: listId,
+        user_id: userData.id,
+        role,
+        added_by: (await supabase.auth.getUser()).data.user?.id,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === '23505') {
+        return { data: null, error: 'User already has access to this list' };
+      }
+      return { data: null, error: error.message };
+    }
+
+    return { data, error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Get all members of a shopping list
+ */
+export async function getShoppingListMembers(
+  listId: string
+): Promise<ApiResult<ShoppingListMember[]>> {
+  try {
+    const { data, error } = await supabase
+      .from('shopping_list_members')
+      .select('*')
+      .eq('list_id', listId)
+      .order('role', { ascending: false }); // owners first
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data: data || [], error: null };
+  } catch (error) {
+    return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
+  }
+}
+
+/**
+ * Remove a member from a shopping list
+ */
+export async function removeShoppingListMember(
+  listId: string,
+  userId: string
+): Promise<ApiResult<void>> {
+  try {
+    const { error } = await supabase
+      .from('shopping_list_members')
+      .delete()
+      .eq('list_id', listId)
+      .eq('user_id', userId);
+
+    if (error) {
+      return { data: null, error: error.message };
+    }
+
+    return { data: null, error: null };
   } catch (error) {
     return { data: null, error: error instanceof Error ? error.message : 'Unknown error' };
   }

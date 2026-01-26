@@ -1858,88 +1858,72 @@ export default function ShoppingListScreen() {
               />
             )}
 
-            {/* Smart Sort button - only show if not already sorted */}
-            {!isSorted && items.filter(i => !i.is_checked).length > 1 && (
-              <TouchableOpacity
-                style={styles.smartSortButton}
-                onPress={handleSmartSort}
-                activeOpacity={0.8}
-                disabled={isSorting}
-              >
-                <LinearGradient
-                  colors={['#8B5CF6', '#7C3AED']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.smartSortGradient}
+            {/* Compact Action Bar - All actions in one row */}
+            {items.length > 0 && (
+              <View style={styles.compactActionBar}>
+                {/* Smart Sort button */}
+                <TouchableOpacity
+                  style={[
+                    styles.compactActionButton,
+                    isSorted && styles.compactActionActive,
+                  ]}
+                  onPress={isSorted ? () => setIsSorted(false) : handleSmartSort}
+                  activeOpacity={0.7}
+                  disabled={isSorting}
                 >
                   {isSorting ? (
-                    <ActivityIndicator size="small" color="#ffffff" />
+                    <ActivityIndicator size="small" color="#8B5CF6" />
                   ) : (
                     <>
-                      <Ionicons name="sparkles" size={20} color="#ffffff" />
-                      <Text style={styles.smartSortButtonText}>Smart Sort by Store Layout</Text>
-                      <Ionicons name="arrow-forward" size={18} color="#ffffff" />
+                      <Ionicons
+                        name={isSorted ? 'checkmark-circle' : 'sparkles'}
+                        size={16}
+                        color={isSorted ? '#10b981' : '#8B5CF6'}
+                      />
+                      <Text style={[
+                        styles.compactActionText,
+                        { color: isSorted ? '#10b981' : '#8B5CF6' }
+                      ]}>
+                        {isSorted ? 'Sorted' : 'Sort'}
+                      </Text>
                     </>
                   )}
-                </LinearGradient>
-              </TouchableOpacity>
-            )}
-
-            {/* Sorted indicator - show after sorting */}
-            {isSorted && sortedSections.length > 0 && (
-              <View style={styles.sortedBanner}>
-                <Ionicons name="checkmark-circle" size={16} color="#10b981" />
-                <Text style={styles.sortedBannerText}>
-                  Sorted by store layout: {sortedSections.slice(0, 3).join(' → ')}
-                  {sortedSections.length > 3 && '...'}
-                </Text>
-                <TouchableOpacity
-                  onPress={() => setIsSorted(false)}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                >
-                  <Ionicons name="close-circle" size={16} color="#10b981" />
                 </TouchableOpacity>
-              </View>
-            )}
 
-            {/* Reorder Mode Banner (Phase 3B) */}
-            {reorderMode && (
-              <View style={styles.reorderBanner}>
-                <Ionicons name="reorder-four" size={16} color="#3B82F6" />
-                <Text style={styles.reorderBannerText}>
-                  Use arrows to reorder items
-                </Text>
+                {/* Reorder button */}
                 <TouchableOpacity
-                  onPress={() => setReorderMode(false)}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  style={[
+                    styles.compactActionButton,
+                    reorderMode && styles.compactActionActive,
+                  ]}
+                  onPress={() => setReorderMode(!reorderMode)}
+                  activeOpacity={0.7}
                 >
-                  <Ionicons name="close-circle" size={16} color="#3B82F6" />
-                </TouchableOpacity>
-              </View>
-            )}
-
-            {/* Shop on Instacart button - always visible when there are items */}
-            {items.length > 0 && (
-              <TouchableOpacity
-                style={styles.instacartButton}
-                onPress={handleShopOnInstacart}
-                activeOpacity={0.8}
-              >
-                <LinearGradient
-                  colors={['#00A862', '#00B566']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.instacartGradient}
-                >
-                  <Ionicons name="cart" size={20} color="#ffffff" />
-                  <Text style={styles.instacartButtonText}>
-                    {selectedForInstacart.size > 0
-                      ? `Shop on Instacart (${selectedForInstacart.size})`
-                      : 'Shop on Instacart'}
+                  <Ionicons
+                    name="reorder-four"
+                    size={16}
+                    color={reorderMode ? '#3B82F6' : '#64748b'}
+                  />
+                  <Text style={[
+                    styles.compactActionText,
+                    reorderMode && { color: '#3B82F6' }
+                  ]}>
+                    Reorder
                   </Text>
-                  <Ionicons name="arrow-forward" size={18} color="#ffffff" />
-                </LinearGradient>
-              </TouchableOpacity>
+                </TouchableOpacity>
+
+                {/* Instacart button */}
+                <TouchableOpacity
+                  style={styles.compactActionButton}
+                  onPress={handleShopOnInstacart}
+                  activeOpacity={0.7}
+                >
+                  <Ionicons name="cart" size={16} color="#00A862" />
+                  <Text style={[styles.compactActionText, { color: '#00A862' }]}>
+                    {selectedForInstacart.size > 0 ? `Shop (${selectedForInstacart.size})` : 'Shop'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
             )}
 
             {/* Items list */}
@@ -3040,7 +3024,37 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: 'rgba(255,255,255,0.5)',
   },
-  // Smart Sort button styles
+  // Compact Action Bar styles
+  compactActionBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 10,
+    gap: 4,
+  },
+  compactActionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: 'transparent',
+  },
+  compactActionActive: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  compactActionText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#64748b',
+  },
+  // Smart Sort button styles (legacy - kept for reference)
   smartSortButton: {
     marginHorizontal: 16,
     marginBottom: 12,

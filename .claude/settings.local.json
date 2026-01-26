@@ -84,7 +84,8 @@
       "WebFetch(domain:vercel.com)",
       "Bash(Select-String -Pattern \"signIn|signInBrowser|About to redirect\")",
       "WebFetch(domain:conference-p201djd3x-jons-projects-d505589b.vercel.app)",
-      "Bash(eas channel:list:*)"
+      "Bash(eas channel:list:*)",
+      "Bash(npx expo-updates fingerprint:generate)"
     ],
     "additionalDirectories": [
       "c:\\Users\\socce\\OneDrive\\Documents\\kandu-fresh\\screens",

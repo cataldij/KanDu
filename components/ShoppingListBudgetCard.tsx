@@ -1,11 +1,17 @@
 /**
- * ShoppingListBudgetCard - Shows estimated total and budget progress
+ * ShoppingListBudgetCard - Compact budget tracker bar
+ * Redesigned for minimal vertical space
  */
 
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import React, { useState } from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, LayoutAnimation, Platform, UIManager } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+
+// Enable LayoutAnimation on Android
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 
 interface ShoppingListBudgetCardProps {
   estimatedTotal: number;
@@ -20,10 +26,17 @@ export default function ShoppingListBudgetCard({
   currency = 'USD',
   onSetBudget,
 }: ShoppingListBudgetCardProps) {
+  const [expanded, setExpanded] = useState(false);
   const budgetProgress = budget ? Math.min((estimatedTotal / budget) * 100, 100) : 0;
   const isOverBudget = budget ? estimatedTotal > budget : false;
 
   const handlePress = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setExpanded(!expanded);
+  };
+
+  const handleSetBudget = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     onSetBudget();
   };
@@ -32,145 +45,217 @@ export default function ShoppingListBudgetCard({
     return `$${amount.toFixed(2)}`;
   };
 
+  // Compact single-line view
   return (
-    <TouchableOpacity
-      style={styles.container}
-      onPress={handlePress}
-      activeOpacity={0.7}
-    >
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Ionicons name="wallet" size={20} color="#3B82F6" />
-          <Text style={styles.title}>Budget Tracker</Text>
+    <View style={styles.container}>
+      <TouchableOpacity
+        style={styles.compactBar}
+        onPress={handlePress}
+        activeOpacity={0.7}
+      >
+        {/* Left: Estimated Total */}
+        <View style={styles.totalSection}>
+          <Ionicons name="wallet" size={16} color={isOverBudget ? '#EF4444' : '#10B981'} />
+          <Text style={[styles.totalLabel, isOverBudget && styles.overBudgetText]}>
+            Est: {formatCurrency(estimatedTotal)}
+          </Text>
         </View>
-        <TouchableOpacity
-          onPress={handlePress}
-          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-        >
-          <Ionicons name="settings-outline" size={20} color="#94a3b8" />
-        </TouchableOpacity>
-      </View>
 
-      <View style={styles.content}>
-        <View style={styles.amountRow}>
-          <View>
-            <Text style={styles.label}>Estimated Total</Text>
-            <Text style={[styles.amount, isOverBudget && styles.amountOver]}>
-              {formatCurrency(estimatedTotal)}
+        {/* Middle: Progress bar (if budget set) */}
+        {budget && (
+          <View style={styles.progressSection}>
+            <View style={styles.progressBarContainer}>
+              <View
+                style={[
+                  styles.progressBar,
+                  isOverBudget && styles.progressBarOver,
+                  { width: `${budgetProgress}%` },
+                ]}
+              />
+            </View>
+          </View>
+        )}
+
+        {/* Right: Budget or Set Budget */}
+        <View style={styles.budgetSection}>
+          {budget ? (
+            <Text style={[styles.budgetLabel, isOverBudget && styles.overBudgetText]}>
+              / {formatCurrency(budget)}
             </Text>
+          ) : (
+            <TouchableOpacity
+              style={styles.setBudgetChip}
+              onPress={handleSetBudget}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <Ionicons name="add" size={14} color="#3B82F6" />
+              <Text style={styles.setBudgetChipText}>Budget</Text>
+            </TouchableOpacity>
+          )}
+          <Ionicons
+            name={expanded ? 'chevron-up' : 'chevron-down'}
+            size={16}
+            color="#64748b"
+          />
+        </View>
+      </TouchableOpacity>
+
+      {/* Expanded details */}
+      {expanded && (
+        <View style={styles.expandedContent}>
+          <View style={styles.expandedRow}>
+            <View style={styles.statItem}>
+              <Text style={styles.statLabel}>Estimated Total</Text>
+              <Text style={[styles.statValue, isOverBudget && styles.overBudgetText]}>
+                {formatCurrency(estimatedTotal)}
+              </Text>
+            </View>
+
+            {budget && (
+              <>
+                <View style={styles.statDivider} />
+                <View style={styles.statItem}>
+                  <Text style={styles.statLabel}>Budget</Text>
+                  <Text style={styles.statValue}>{formatCurrency(budget)}</Text>
+                </View>
+                <View style={styles.statDivider} />
+                <View style={styles.statItem}>
+                  <Text style={styles.statLabel}>Remaining</Text>
+                  <Text style={[styles.statValue, isOverBudget && styles.overBudgetText]}>
+                    {isOverBudget ? '-' : ''}{formatCurrency(Math.abs(budget - estimatedTotal))}
+                  </Text>
+                </View>
+              </>
+            )}
           </View>
 
-          {budget && (
-            <View style={styles.budgetSection}>
-              <Text style={styles.label}>of {formatCurrency(budget)}</Text>
-              <Text style={[styles.percentage, isOverBudget && styles.percentageOver]}>
-                {budgetProgress.toFixed(0)}%
+          <TouchableOpacity
+            style={styles.editBudgetButton}
+            onPress={handleSetBudget}
+          >
+            <Ionicons name="create-outline" size={14} color="#3B82F6" />
+            <Text style={styles.editBudgetText}>
+              {budget ? 'Edit Budget' : 'Set Budget'}
+            </Text>
+          </TouchableOpacity>
+
+          {isOverBudget && (
+            <View style={styles.warningBanner}>
+              <Ionicons name="warning" size={14} color="#EF4444" />
+              <Text style={styles.warningText}>
+                Over budget by {formatCurrency(estimatedTotal - (budget || 0))}
               </Text>
             </View>
           )}
         </View>
-
-        {budget ? (
-          <View style={styles.progressBarContainer}>
-            <View
-              style={[
-                styles.progressBar,
-                isOverBudget && styles.progressBarOver,
-                { width: `${budgetProgress}%` },
-              ]}
-            />
-          </View>
-        ) : (
-          <TouchableOpacity style={styles.setBudgetButton} onPress={handlePress}>
-            <Ionicons name="add-circle-outline" size={16} color="#3B82F6" />
-            <Text style={styles.setBudgetText}>Set Budget</Text>
-          </TouchableOpacity>
-        )}
-
-        {isOverBudget && (
-          <View style={styles.warningBanner}>
-            <Ionicons name="warning" size={14} color="#EF4444" />
-            <Text style={styles.warningText}>
-              Over budget by {formatCurrency(estimatedTotal - (budget || 0))}
-            </Text>
-          </View>
-        )}
-      </View>
-    </TouchableOpacity>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-    backgroundColor: 'rgba(255,255,255,0.06)',
     marginHorizontal: 16,
-    marginBottom: 12,
-    borderRadius: 12,
-    padding: 16,
+    marginBottom: 8,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 10,
+    overflow: 'hidden',
   },
-  header: {
+  compactBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 12,
-  },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
     gap: 8,
   },
-  title: {
+  totalSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  totalLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#ffffff',
-  },
-  content: {
-    gap: 8,
-  },
-  amountRow: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    justifyContent: 'space-between',
-  },
-  label: {
-    fontSize: 12,
-    color: '#94a3b8',
-    marginBottom: 4,
-  },
-  amount: {
-    fontSize: 24,
-    fontWeight: '700',
     color: '#10B981',
   },
-  amountOver: {
+  overBudgetText: {
     color: '#EF4444',
   },
-  budgetSection: {
-    alignItems: 'flex-end',
-  },
-  percentage: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#10B981',
-  },
-  percentageOver: {
-    color: '#EF4444',
+  progressSection: {
+    flex: 1,
+    paddingHorizontal: 8,
   },
   progressBarContainer: {
-    height: 6,
+    height: 4,
     backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 3,
+    borderRadius: 2,
     overflow: 'hidden',
   },
   progressBar: {
     height: '100%',
     backgroundColor: '#10B981',
-    borderRadius: 3,
+    borderRadius: 2,
   },
   progressBarOver: {
     backgroundColor: '#EF4444',
   },
-  setBudgetButton: {
+  budgetSection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  budgetLabel: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#94a3b8',
+  },
+  setBudgetChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    backgroundColor: 'rgba(59,130,246,0.1)',
+    borderRadius: 6,
+  },
+  setBudgetChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#3B82F6',
+  },
+  expandedContent: {
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    gap: 10,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.08)',
+    paddingTop: 10,
+  },
+  expandedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+  },
+  statItem: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  statLabel: {
+    fontSize: 11,
+    color: '#64748b',
+    marginBottom: 2,
+  },
+  statValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  statDivider: {
+    width: 1,
+    height: 30,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  editBudgetButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -178,11 +263,8 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     backgroundColor: 'rgba(59,130,246,0.1)',
     borderRadius: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(59,130,246,0.3)',
-    borderStyle: 'dashed',
   },
-  setBudgetText: {
+  editBudgetText: {
     fontSize: 13,
     fontWeight: '600',
     color: '#3B82F6',

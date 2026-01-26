@@ -1267,14 +1267,249 @@ export async function createShoppingList(
   }
 }
 
+// ============================================
+// PRICE ESTIMATION
+// ============================================
+
+// Common grocery item prices (average US prices in 2024-2025)
+const GROCERY_PRICES: Record<string, number> = {
+  // Dairy
+  'milk': 4.50, 'whole milk': 4.50, '2% milk': 4.50, 'skim milk': 4.25, 'oat milk': 5.50, 'almond milk': 4.99,
+  'eggs': 4.99, 'dozen eggs': 4.99, 'butter': 5.49, 'cheese': 4.99, 'cheddar': 4.99, 'mozzarella': 4.99,
+  'cream cheese': 3.99, 'sour cream': 2.99, 'yogurt': 1.29, 'greek yogurt': 1.49, 'cottage cheese': 4.29,
+  'half and half': 4.49, 'heavy cream': 5.99, 'whipped cream': 4.29, 'cream': 4.99,
+
+  // Bread & Bakery
+  'bread': 3.99, 'white bread': 3.49, 'wheat bread': 4.29, 'sourdough': 5.49, 'bagels': 4.99,
+  'tortillas': 3.99, 'pita': 3.49, 'english muffins': 3.99, 'croissants': 5.99, 'rolls': 3.99,
+  'buns': 3.49, 'hamburger buns': 3.49, 'hot dog buns': 3.49,
+
+  // Meat & Protein
+  'chicken': 8.99, 'chicken breast': 9.99, 'chicken thighs': 6.99, 'ground beef': 7.99, 'beef': 12.99,
+  'steak': 14.99, 'pork': 6.99, 'pork chops': 7.99, 'bacon': 7.99, 'sausage': 5.99, 'ham': 6.99,
+  'turkey': 8.99, 'ground turkey': 7.99, 'fish': 9.99, 'salmon': 12.99, 'shrimp': 11.99, 'tuna': 2.49,
+  'hot dogs': 4.99, 'deli meat': 7.99, 'lunch meat': 6.99,
+
+  // Produce
+  'apples': 4.99, 'bananas': 1.49, 'oranges': 4.99, 'lemons': 0.69, 'limes': 0.49, 'grapes': 4.99,
+  'strawberries': 4.99, 'blueberries': 5.99, 'raspberries': 5.99, 'avocado': 1.99, 'avocados': 5.99,
+  'tomatoes': 3.99, 'tomato': 0.99, 'onions': 2.99, 'onion': 0.99, 'potatoes': 4.99, 'potato': 0.79,
+  'carrots': 2.49, 'celery': 2.99, 'lettuce': 2.99, 'spinach': 4.99, 'broccoli': 2.99, 'cucumber': 1.49,
+  'peppers': 1.99, 'bell pepper': 1.49, 'garlic': 0.99, 'ginger': 2.99, 'mushrooms': 3.99,
+  'corn': 0.79, 'green beans': 2.99, 'asparagus': 4.99, 'zucchini': 1.99, 'squash': 1.99,
+  'cabbage': 2.49, 'kale': 3.99, 'cilantro': 1.49, 'parsley': 1.49, 'basil': 2.99,
+
+  // Pantry Staples
+  'rice': 4.99, 'pasta': 1.99, 'spaghetti': 1.99, 'noodles': 2.49, 'cereal': 4.99, 'oatmeal': 4.99,
+  'flour': 4.49, 'sugar': 3.99, 'salt': 1.99, 'pepper': 4.99, 'olive oil': 9.99, 'vegetable oil': 4.99,
+  'cooking oil': 4.99, 'vinegar': 3.49, 'soy sauce': 3.99, 'ketchup': 4.29, 'mustard': 2.99,
+  'mayonnaise': 5.49, 'mayo': 5.49, 'peanut butter': 4.99, 'jelly': 3.99, 'jam': 4.49, 'honey': 7.99,
+  'maple syrup': 9.99, 'coffee': 9.99, 'tea': 4.99, 'cocoa': 5.99, 'chocolate': 3.99,
+
+  // Canned Goods
+  'canned tomatoes': 1.99, 'tomato sauce': 1.49, 'tomato paste': 1.29, 'beans': 1.49, 'black beans': 1.49,
+  'chickpeas': 1.49, 'corn': 1.29, 'peas': 1.29, 'soup': 2.99, 'broth': 2.99, 'chicken broth': 2.99,
+
+  // Frozen
+  'ice cream': 5.99, 'frozen pizza': 7.99, 'frozen vegetables': 3.49, 'frozen fruit': 4.99,
+  'frozen chicken': 12.99, 'frozen fish': 9.99, 'frozen waffles': 4.49, 'frozen fries': 4.49,
+
+  // Beverages
+  'water': 5.99, 'bottled water': 5.99, 'juice': 4.99, 'orange juice': 5.99, 'apple juice': 4.49,
+  'soda': 7.99, 'coke': 7.99, 'pepsi': 7.99, 'sprite': 7.99, 'beer': 12.99, 'wine': 12.99,
+  'sparkling water': 5.99, 'energy drink': 2.99, 'sports drink': 2.49, 'gatorade': 2.49,
+
+  // Snacks
+  'chips': 4.99, 'crackers': 3.99, 'cookies': 4.49, 'pretzels': 3.99, 'popcorn': 4.99,
+  'nuts': 7.99, 'almonds': 8.99, 'peanuts': 5.99, 'granola bars': 4.99, 'trail mix': 6.99,
+
+  // Condiments & Spices
+  'salsa': 4.49, 'hot sauce': 3.99, 'bbq sauce': 3.99, 'ranch': 4.49, 'italian dressing': 3.99,
+  'cinnamon': 4.99, 'cumin': 4.99, 'paprika': 4.99, 'oregano': 3.99, 'thyme': 3.99,
+
+  // Personal Care (common additions)
+  'toilet paper': 12.99, 'paper towels': 9.99, 'tissues': 3.99, 'soap': 4.99, 'shampoo': 6.99,
+  'toothpaste': 4.99, 'deodorant': 5.99, 'lotion': 7.99,
+
+  // Cleaning
+  'dish soap': 3.99, 'laundry detergent': 12.99, 'bleach': 4.99, 'trash bags': 9.99,
+  'sponges': 3.99, 'cleaning spray': 4.99, 'disinfectant': 5.99,
+};
+
+// Hardware/tool prices
+const HARDWARE_PRICES: Record<string, number> = {
+  // Basic Tools
+  'screwdriver': 8.99, 'hammer': 15.99, 'pliers': 12.99, 'wrench': 14.99, 'adjustable wrench': 16.99,
+  'tape measure': 9.99, 'level': 19.99, 'drill': 79.99, 'drill bits': 19.99, 'saw': 24.99,
+  'utility knife': 8.99, 'box cutter': 5.99, 'scissors': 7.99, 'wire cutters': 12.99,
+
+  // Plumbing
+  'plunger': 12.99, 'pipe wrench': 24.99, 'plumbers tape': 3.99, 'teflon tape': 3.99,
+  'drain snake': 19.99, 'pvc pipe': 4.99, 'pipe fittings': 3.99, 'faucet': 79.99,
+  'shutoff valve': 12.99, 'toilet flapper': 8.99, 'wax ring': 5.99,
+
+  // Electrical
+  'wire nuts': 4.99, 'electrical tape': 4.99, 'outlet': 3.99, 'switch': 4.99, 'light switch': 4.99,
+  'circuit breaker': 12.99, 'wire': 19.99, 'extension cord': 14.99, 'power strip': 19.99,
+  'light bulb': 5.99, 'led bulb': 7.99, 'batteries': 9.99, 'multimeter': 29.99,
+
+  // Fasteners
+  'screws': 6.99, 'nails': 5.99, 'bolts': 4.99, 'nuts': 3.99, 'washers': 3.99,
+  'anchors': 5.99, 'wall anchors': 5.99, 'drywall screws': 7.99,
+
+  // Adhesives & Sealants
+  'glue': 4.99, 'wood glue': 6.99, 'super glue': 4.99, 'epoxy': 8.99, 'caulk': 6.99,
+  'silicone': 7.99, 'sealant': 7.99, 'wd-40': 6.99, 'lubricant': 5.99,
+
+  // Safety
+  'safety glasses': 9.99, 'gloves': 12.99, 'work gloves': 14.99, 'dust mask': 9.99,
+  'ear plugs': 5.99, 'hard hat': 19.99,
+
+  // Paint & Finishing
+  'paint': 34.99, 'primer': 24.99, 'paint brush': 8.99, 'roller': 9.99, 'paint roller': 12.99,
+  'sandpaper': 6.99, 'wood stain': 14.99, 'polyurethane': 19.99, 'painters tape': 6.99,
+  'drop cloth': 9.99,
+
+  // Misc
+  'flashlight': 14.99, 'ladder': 89.99, 'stud finder': 24.99, 'caulk gun': 9.99,
+  'zip ties': 5.99, 'duct tape': 7.99, 'masking tape': 5.99,
+};
+
+// Category-based fallback prices
+const CATEGORY_FALLBACK_PRICES: Record<string, number> = {
+  'dairy': 4.50,
+  'produce': 3.00,
+  'meat': 9.00,
+  'bakery': 4.00,
+  'frozen': 5.00,
+  'beverages': 5.00,
+  'snacks': 4.50,
+  'pantry': 4.00,
+  'condiments': 4.00,
+  'cleaning': 6.00,
+  'personal care': 6.00,
+  'tools': 15.00,
+  'hardware': 10.00,
+  'electrical': 8.00,
+  'plumbing': 12.00,
+  'other': 5.00,
+};
+
 /**
- * Add item to shopping list
+ * Estimate price for a shopping list item
+ * Uses fuzzy matching against known item prices
+ */
+export function estimateItemPrice(itemName: string, category?: string, isHardware?: boolean): number | null {
+  const normalizedName = itemName.toLowerCase().trim();
+  const priceDb = isHardware ? HARDWARE_PRICES : GROCERY_PRICES;
+
+  // 1. Exact match
+  if (priceDb[normalizedName]) {
+    return priceDb[normalizedName];
+  }
+
+  // 2. Partial match - check if item name contains or is contained by any key
+  for (const [key, price] of Object.entries(priceDb)) {
+    if (normalizedName.includes(key) || key.includes(normalizedName)) {
+      return price;
+    }
+  }
+
+  // 3. Word-by-word match - check individual words
+  const words = normalizedName.split(/\s+/);
+  for (const word of words) {
+    if (word.length >= 3 && priceDb[word]) {
+      return priceDb[word];
+    }
+  }
+
+  // 4. Check hardware prices if not found in grocery (might be mixed list)
+  if (!isHardware) {
+    for (const [key, price] of Object.entries(HARDWARE_PRICES)) {
+      if (normalizedName.includes(key) || key.includes(normalizedName)) {
+        return price;
+      }
+    }
+  }
+
+  // 5. Category-based fallback
+  if (category) {
+    const normalizedCategory = category.toLowerCase();
+    if (CATEGORY_FALLBACK_PRICES[normalizedCategory]) {
+      return CATEGORY_FALLBACK_PRICES[normalizedCategory];
+    }
+  }
+
+  // 6. Default fallback based on list type
+  return isHardware ? 10.00 : 4.00;
+}
+
+/**
+ * Estimate category for an item based on its name
+ */
+export function estimateItemCategory(itemName: string): string {
+  const normalizedName = itemName.toLowerCase();
+
+  // Dairy
+  if (/milk|cheese|yogurt|butter|cream|egg/.test(normalizedName)) return 'dairy';
+
+  // Produce
+  if (/apple|banana|orange|lemon|lime|grape|berry|avocado|tomato|onion|potato|carrot|lettuce|spinach|broccoli|pepper|garlic|mushroom|fruit|vegetable/.test(normalizedName)) return 'produce';
+
+  // Meat
+  if (/chicken|beef|pork|steak|bacon|sausage|ham|turkey|fish|salmon|shrimp|meat/.test(normalizedName)) return 'meat';
+
+  // Bakery
+  if (/bread|bagel|tortilla|roll|bun|croissant|muffin/.test(normalizedName)) return 'bakery';
+
+  // Beverages
+  if (/water|juice|soda|coke|pepsi|beer|wine|coffee|tea|drink/.test(normalizedName)) return 'beverages';
+
+  // Frozen
+  if (/frozen|ice cream/.test(normalizedName)) return 'frozen';
+
+  // Snacks
+  if (/chip|cracker|cookie|pretzel|popcorn|nut|granola|snack/.test(normalizedName)) return 'snacks';
+
+  // Cleaning
+  if (/soap|detergent|bleach|clean|sponge|trash bag/.test(normalizedName)) return 'cleaning';
+
+  // Personal care
+  if (/shampoo|toothpaste|deodorant|lotion|toilet paper|tissue|paper towel/.test(normalizedName)) return 'personal care';
+
+  // Tools
+  if (/screwdriver|hammer|pliers|wrench|drill|saw|knife|tape measure/.test(normalizedName)) return 'tools';
+
+  // Hardware
+  if (/screw|nail|bolt|anchor|wire|pipe|faucet|outlet|switch/.test(normalizedName)) return 'hardware';
+
+  // Electrical
+  if (/bulb|battery|cord|outlet|switch|breaker/.test(normalizedName)) return 'electrical';
+
+  // Plumbing
+  if (/plunger|pipe|drain|faucet|valve|toilet/.test(normalizedName)) return 'plumbing';
+
+  // Pantry (default for food items)
+  if (/rice|pasta|flour|sugar|oil|sauce|soup|can|cereal/.test(normalizedName)) return 'pantry';
+
+  return 'other';
+}
+
+/**
+ * Add item to shopping list with auto price estimation
  */
 export async function addShoppingListItem(
   listId: string,
   item: Partial<ShoppingListItem>
 ): Promise<ApiResult<ShoppingListItem>> {
   try {
+    // Auto-estimate category if not provided
+    const category = item.category || (item.item_name ? estimateItemCategory(item.item_name) : undefined);
+
+    // Auto-estimate price if not provided
+    const estimatedPrice = item.estimated_price ??
+      (item.item_name ? estimateItemPrice(item.item_name, category, item.is_tool) : null);
+
     const { data, error } = await supabase
       .from('shopping_list_items')
       .insert({
@@ -1282,9 +1517,9 @@ export async function addShoppingListItem(
         item_name: item.item_name,
         quantity: item.quantity,
         unit: item.unit,
-        category: item.category,
+        category: category,
         aisle_hint: item.aisle_hint,
-        estimated_price: item.estimated_price,
+        estimated_price: estimatedPrice,
         store_suggestion: item.store_suggestion,
         is_tool: item.is_tool || false,
         priority: item.priority || 'normal',
@@ -1305,27 +1540,36 @@ export async function addShoppingListItem(
 }
 
 /**
- * Add multiple items to shopping list
+ * Add multiple items to shopping list with auto price estimation
  */
 export async function addShoppingListItems(
   listId: string,
   items: Array<Partial<ShoppingListItem>>
 ): Promise<ApiResult<ShoppingListItem[]>> {
   try {
-    const insertData = items.map((item) => ({
-      list_id: listId,
-      item_name: item.item_name,
-      quantity: item.quantity,
-      unit: item.unit,
-      category: item.category,
-      aisle_hint: item.aisle_hint,
-      estimated_price: item.estimated_price,
-      store_suggestion: item.store_suggestion,
-      is_tool: item.is_tool || false,
-      priority: item.priority || 'normal',
-      notes: item.notes,
-      source_step_number: item.source_step_number,
-    }));
+    const insertData = items.map((item) => {
+      // Auto-estimate category if not provided
+      const category = item.category || (item.item_name ? estimateItemCategory(item.item_name) : undefined);
+
+      // Auto-estimate price if not provided
+      const estimatedPrice = item.estimated_price ??
+        (item.item_name ? estimateItemPrice(item.item_name, category, item.is_tool) : null);
+
+      return {
+        list_id: listId,
+        item_name: item.item_name,
+        quantity: item.quantity,
+        unit: item.unit,
+        category: category,
+        aisle_hint: item.aisle_hint,
+        estimated_price: estimatedPrice,
+        store_suggestion: item.store_suggestion,
+        is_tool: item.is_tool || false,
+        priority: item.priority || 'normal',
+        notes: item.notes,
+        source_step_number: item.source_step_number,
+      };
+    });
 
     const { data, error } = await supabase
       .from('shopping_list_items')

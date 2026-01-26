@@ -24,7 +24,6 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import * as ImagePicker from 'expo-image-picker';
-import * as ImageManipulator from 'expo-image-manipulator';
 import Svg, { Path } from 'react-native-svg';
 
 import {
@@ -279,17 +278,8 @@ export default function AddSafetyItemScreen() {
   const uploadImage = async (uri: string, field: 'overview_image_url' | 'destination_image_url' | 'control_image_url') => {
     setUploadingImage(field);
     try {
-      // Resize image to 800px width - keeps files small (~100-200KB vs 2-4MB)
-      const resized = await ImageManipulator.manipulateAsync(
-        uri,
-        [{ resize: { width: 800 } }],
-        { compress: 0.7, format: ImageManipulator.SaveFormat.JPEG }
-      );
-
-      console.log(`[Upload] Resized to 800px width: ${resized.uri}`);
-
-      // Fetch the resized file
-      const response = await fetch(resized.uri);
+      // Fetch the image file directly (no resize - expo-image-manipulator not in this build)
+      const response = await fetch(uri);
       const blob = await response.blob();
 
       // Convert blob to ArrayBuffer via FileReader

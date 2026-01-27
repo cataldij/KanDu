@@ -8,7 +8,7 @@
  * that previously exposed API keys in the client.
  */
 
-import { supabase, supabaseAnonKey, supabaseUrl } from './supabase';
+import { supabase } from './supabase';
 
 // Types
 export interface DiagnosisRequest {
@@ -263,13 +263,16 @@ async function callFunction<T>(
     console.log(`[API] Token expires_at: ${session.expires_at}, now: ${Math.floor(Date.now()/1000)}`);
 
     // Use fetch directly to have full control over headers
-    // supabase.functions.invoke was not sending apikey correctly
-    const functionUrl = `${supabaseUrl}/functions/v1/${functionName}`;
+    // Read env vars directly to ensure they're available
+    const url = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
+    const apiKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+
+    const functionUrl = `${url}/functions/v1/${functionName}`;
     const response = await fetch(functionUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'apikey': supabaseAnonKey,
+        'apikey': apiKey,
         'Authorization': `Bearer ${token}`,
       },
       body: JSON.stringify(body),

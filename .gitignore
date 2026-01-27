@@ -53,3 +53,5 @@ service-account.json
 /ios
 /android
 nul
+
+.vercel

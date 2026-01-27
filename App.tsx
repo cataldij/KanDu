@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { ActivityIndicator, View, StyleSheet } from 'react-native';
+import { ActivityIndicator, View, StyleSheet, Platform } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import * as Updates from 'expo-updates';
@@ -275,7 +275,7 @@ function AppNavigator() {
 
 export default function App() {
   // Show cinematic splash on cold start
-  const [showSplash, setShowSplash] = useState(true);
+  const [showSplash, setShowSplash] = useState(Platform.OS !== 'web');
 
   // Check for OTA updates on app launch
   useEffect(() => {
@@ -312,10 +312,12 @@ export default function App() {
         <StatusBar style="auto" />
         <AppNavigator />
         {/* Cinematic splash overlay - shows on cold start */}
-        <StartupCinematicOverlay
-          visible={showSplash}
-          onComplete={handleSplashComplete}
-        />
+        {Platform.OS !== 'web' && (
+          <StartupCinematicOverlay
+            visible={showSplash}
+            onComplete={handleSplashComplete}
+          />
+        )}
       </NavigationContainer>
     </AuthProvider>
   );

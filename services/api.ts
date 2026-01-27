@@ -8,7 +8,7 @@
  * that previously exposed API keys in the client.
  */
 
-import { supabase } from './supabase';
+import { supabase, supabaseAnonKey } from './supabase';
 
 // Types
 export interface DiagnosisRequest {
@@ -289,10 +289,14 @@ async function callFunction<T>(
     console.log(`[API] Token present: ${!!token}, starts with: ${token?.substring(0, 20)}...`);
     console.log(`[API] Token expires_at: ${session.expires_at}, now: ${Math.floor(Date.now()/1000)}`);
 
-    // Let Supabase client handle auth headers automatically
-    // Don't override headers as it removes the default apikey header
+    // Explicitly pass both apikey and Authorization headers
+    // The supabase-js client wasn't including apikey automatically
     const { data, error } = await supabase.functions.invoke<T>(functionName, {
       body,
+      headers: {
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${token}`,
+      },
     });
 
     console.log(`[API] ${functionName} response:`, {

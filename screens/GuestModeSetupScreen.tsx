@@ -675,20 +675,19 @@ export default function GuestModeSetupScreen() {
             <Text style={styles.scanCompleteTitle}>
               {data.home_base_scan_complete
                 ? 'Kitchen Scan Complete!'
-                : `${data.home_base_images.length} of 4 angles captured`}
+                : `${data.home_base_images.length} of 9 angles captured`}
             </Text>
           </View>
 
-          {/* Preview grid of captured images */}
+          {/* Preview grid of captured images (all 9 angles) */}
           <View style={styles.scanPreviewGrid}>
-            {data.home_base_images.slice(0, 4).map((img, idx) => {
+            {data.home_base_images.map((img, idx) => {
               console.log(`[Preview] Image ${idx}: ${img.angle} - ${img.url?.substring(0, 50)}...`);
               return (
                 <View key={idx} style={styles.scanPreviewItem}>
                   {/* Placeholder background */}
                   <View style={styles.scanPreviewPlaceholder}>
-                    <Ionicons name="image-outline" size={32} color="#94a3b8" />
-                    <Text style={styles.scanPreviewPlaceholderText}>Loading...</Text>
+                    <Ionicons name="image-outline" size={20} color="#94a3b8" />
                   </View>
                   {/* Actual image */}
                   {img.url && (
@@ -700,8 +699,7 @@ export default function GuestModeSetupScreen() {
                     />
                   )}
                   <View style={styles.scanPreviewLabelContainer}>
-                    <Ionicons name="camera" size={12} color="#fff" />
-                    <Text style={styles.scanPreviewLabelText}>{img.description || img.angle}</Text>
+                    <Text style={styles.scanPreviewLabelText}>{img.angle.replace('_', '-')}</Text>
                   </View>
                 </View>
               );
@@ -1462,13 +1460,13 @@ const styles = StyleSheet.create({
   scanPreviewGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 6,
     marginBottom: 16,
   },
   scanPreviewItem: {
-    width: (SCREEN_WIDTH - 80) / 2,
-    height: 120,
-    borderRadius: 12,
+    width: (SCREEN_WIDTH - 92) / 3, // 3-column grid for 9 images
+    height: 90,
+    borderRadius: 10,
     overflow: 'hidden',
     backgroundColor: '#e2e8f0',
     borderWidth: 2,

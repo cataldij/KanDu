@@ -283,6 +283,12 @@ export default function App() {
       try {
         // Check for updates in both dev and production
         console.log('[Updates] Checking for updates...');
+        console.log('[Updates] current', {
+          updateId: Updates.updateId,
+          runtimeVersion: Updates.runtimeVersion,
+          channel: Updates.channel,
+          isEmbeddedLaunch: Updates.isEmbeddedLaunch,
+        });
         const update = await Updates.checkForUpdateAsync();
 
         if (update.isAvailable) {

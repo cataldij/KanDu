@@ -19,9 +19,39 @@ interface HomeBaseImage {
   description?: string;
 }
 
+// Property types for grouping guest kits
+type PropertyType = 'primary_residence' | 'second_home' | 'rental';
+
+interface Property {
+  id?: string;
+  user_id?: string;
+  name: string;
+  property_type: PropertyType;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip_code?: string;
+  image_url?: string;
+  rental_platform?: string;
+  property_manager_name?: string;
+  property_manager_phone?: string;
+  gate_code?: string;
+  garage_code?: string;
+  lockbox_code?: string;
+  alarm_code?: string;
+  wifi_network?: string;
+  wifi_password?: string;
+  parking_instructions?: string;
+  trash_schedule?: string;
+  hoa_rules?: string;
+  emergency_contacts?: { name: string; phone: string; role: string }[];
+  display_order?: number;
+}
+
 interface GuestKit {
   id?: string;
   user_id?: string;
+  property_id?: string; // Reference to property for grouping
   slug?: string;
   kit_type?: 'home' | 'rental';
   display_name: string;
@@ -753,6 +783,131 @@ Deno.serve(async (req) => {
           .order('display_order', { ascending: true });
 
         return successResponse({ zone, items: items || [] });
+      }
+
+      // ============================================
+      // PROPERTY OPERATIONS
+      // ============================================
+
+      case 'list-properties': {
+        const { data: properties, error } = await supabase
+          .from('properties')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('display_order', { ascending: true })
+          .order('created_at', { ascending: false });
+
+        if (error) {
+          console.error('List properties error:', error);
+          return errorResponse('Failed to list properties', 500);
+        }
+
+        return successResponse({ properties: properties || [] });
+      }
+
+      case 'create-property': {
+        const { name, property_type, ...optionalFields } = body as Property & { action: string };
+
+        if (!name) {
+          return errorResponse('name is required', 400);
+        }
+
+        // Get next display order
+        const { data: lastProperty } = await supabase
+          .from('properties')
+          .select('display_order')
+          .eq('user_id', user.id)
+          .order('display_order', { ascending: false })
+          .limit(1)
+          .single();
+
+        const newProperty = {
+          user_id: user.id,
+          name,
+          property_type: property_type || 'primary_residence',
+          address: optionalFields.address || null,
+          city: optionalFields.city || null,
+          state: optionalFields.state || null,
+          zip_code: optionalFields.zip_code || null,
+          image_url: optionalFields.image_url || null,
+          rental_platform: optionalFields.rental_platform || null,
+          property_manager_name: optionalFields.property_manager_name || null,
+          property_manager_phone: optionalFields.property_manager_phone || null,
+          gate_code: optionalFields.gate_code || null,
+          garage_code: optionalFields.garage_code || null,
+          lockbox_code: optionalFields.lockbox_code || null,
+          alarm_code: optionalFields.alarm_code || null,
+          wifi_network: optionalFields.wifi_network || null,
+          wifi_password: optionalFields.wifi_password || null,
+          parking_instructions: optionalFields.parking_instructions || null,
+          trash_schedule: optionalFields.trash_schedule || null,
+          hoa_rules: optionalFields.hoa_rules || null,
+          emergency_contacts: optionalFields.emergency_contacts || [],
+          display_order: (lastProperty?.display_order || 0) + 1,
+        };
+
+        const { data, error } = await supabase
+          .from('properties')
+          .insert(newProperty)
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Create property error:', error);
+          return errorResponse('Failed to create property', 500);
+        }
+
+        return successResponse({ property: data });
+      }
+
+      case 'update-property': {
+        const { propertyId, ...updates } = body as { propertyId: string; action: string } & Partial<Property>;
+
+        if (!propertyId) {
+          return errorResponse('propertyId is required', 400);
+        }
+
+        // Remove fields that shouldn't be updated
+        delete (updates as any).id;
+        delete (updates as any).user_id;
+        delete (updates as any).action;
+
+        const { data, error } = await supabase
+          .from('properties')
+          .update(updates)
+          .eq('id', propertyId)
+          .eq('user_id', user.id)
+          .select()
+          .single();
+
+        if (error) {
+          console.error('Update property error:', error);
+          return errorResponse('Failed to update property', 500);
+        }
+
+        return successResponse({ property: data });
+      }
+
+      case 'delete-property': {
+        const { propertyId } = body as { propertyId: string };
+
+        if (!propertyId) {
+          return errorResponse('propertyId is required', 400);
+        }
+
+        // Note: guest_kits.property_id will be set to NULL due to ON DELETE SET NULL
+        const { error } = await supabase
+          .from('properties')
+          .delete()
+          .eq('id', propertyId)
+          .eq('user_id', user.id);
+
+        if (error) {
+          console.error('Delete property error:', error);
+          return errorResponse('Failed to delete property', 500);
+        }
+
+        return successResponse({ success: true });
       }
 
       default:

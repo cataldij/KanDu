@@ -649,6 +649,92 @@ export async function getArticleImages(
 }
 
 // ============================================
+// PROPERTIES API (Groups Guest Kits by Location)
+// ============================================
+
+export type PropertyType = 'primary_residence' | 'second_home' | 'rental';
+
+export interface EmergencyContact {
+  name: string;
+  phone: string;
+  role: string; // "plumber", "electrician", "neighbor", etc.
+}
+
+export interface Property {
+  id: string;
+  user_id: string;
+  name: string;
+  property_type: PropertyType;
+
+  // Optional location
+  address?: string;
+  city?: string;
+  state?: string;
+  zip_code?: string;
+
+  // Optional photo
+  image_url?: string;
+
+  // Optional rental info
+  rental_platform?: string;
+  property_manager_name?: string;
+  property_manager_phone?: string;
+
+  // Optional access codes
+  gate_code?: string;
+  garage_code?: string;
+  lockbox_code?: string;
+  alarm_code?: string;
+  wifi_network?: string;
+  wifi_password?: string;
+
+  // Optional details
+  parking_instructions?: string;
+  trash_schedule?: string;
+  hoa_rules?: string;
+  emergency_contacts?: EmergencyContact[];
+
+  display_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * List all properties for the current user
+ */
+export async function listProperties(): Promise<ApiResult<{ properties: Property[] }>> {
+  return callFunction('guest-kit', { action: 'list-properties' });
+}
+
+/**
+ * Create a new property
+ */
+export async function createProperty(
+  data: Partial<Property> & { name: string; property_type: PropertyType }
+): Promise<ApiResult<{ property: Property }>> {
+  return callFunction('guest-kit', { action: 'create-property', ...data });
+}
+
+/**
+ * Update an existing property
+ */
+export async function updateProperty(
+  propertyId: string,
+  data: Partial<Property>
+): Promise<ApiResult<{ property: Property }>> {
+  return callFunction('guest-kit', { action: 'update-property', propertyId, ...data });
+}
+
+/**
+ * Delete a property
+ */
+export async function deleteProperty(
+  propertyId: string
+): Promise<ApiResult<{ success: boolean }>> {
+  return callFunction('guest-kit', { action: 'delete-property', propertyId });
+}
+
+// ============================================
 // GUEST MODE API
 // ============================================
 
@@ -661,6 +747,7 @@ export interface HomeBaseImage {
 export interface GuestKit {
   id: string;
   user_id: string;
+  property_id?: string; // Reference to property for grouping
   slug: string;
   kit_type: 'home' | 'rental';
   display_name: string;

@@ -247,35 +247,8 @@ async function callFunction<T>(
   try {
     console.log(`[API] Calling ${functionName}...`);
 
-    // Check if user is authenticated - try to refresh if needed
-    let { data: { session } } = await supabase.auth.getSession();
-
-    // If session exists but might be expired, try to refresh it
-    if (session) {
-      const expiresAt = session.expires_at ? session.expires_at * 1000 : 0;
-      const now = Date.now();
-      const fiveMinutes = 5 * 60 * 1000;
-      const isExpired = expiresAt <= now;
-      const expiresWithin5Min = expiresAt - now < fiveMinutes;
-
-      console.log(`[API] Token check: expiresAt=${new Date(expiresAt).toISOString()}, now=${new Date(now).toISOString()}, expired=${isExpired}, expiresWithin5Min=${expiresWithin5Min}`);
-
-      // Refresh if already expired or expires within 5 minutes
-      if (isExpired || expiresWithin5Min) {
-        console.log(`[API] Session ${isExpired ? 'EXPIRED' : 'expiring soon'}, refreshing...`);
-        const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
-        if (refreshError) {
-          console.error(`[API] Session refresh failed:`, refreshError);
-          // If refresh fails and token is expired, return auth error
-          if (isExpired) {
-            return { data: null, error: 'Session expired. Please sign in again.' };
-          }
-        } else if (refreshData.session) {
-          session = refreshData.session;
-          console.log(`[API] Session refreshed successfully, new expires_at: ${refreshData.session.expires_at}`);
-        }
-      }
-    }
+    // Get current session - Supabase handles token refresh automatically
+    const { data: { session } } = await supabase.auth.getSession();
 
     console.log(`[API] Auth status: ${session ? 'authenticated' : 'NOT authenticated'}`);
 

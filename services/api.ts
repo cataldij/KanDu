@@ -289,12 +289,10 @@ async function callFunction<T>(
     console.log(`[API] Token present: ${!!token}, starts with: ${token?.substring(0, 20)}...`);
     console.log(`[API] Token expires_at: ${session.expires_at}, now: ${Math.floor(Date.now()/1000)}`);
 
-    // Explicitly pass auth header to ensure it's included
+    // Let Supabase client handle auth headers automatically
+    // Don't override headers as it removes the default apikey header
     const { data, error } = await supabase.functions.invoke<T>(functionName, {
       body,
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
     });
 
     console.log(`[API] ${functionName} response:`, {

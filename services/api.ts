@@ -266,6 +266,9 @@ async function callFunction<T>(
     // Read env vars directly to ensure they're available
     const url = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
     const apiKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
+    console.log(
+      `[API] ${functionName} headers: apikeyPresent=${apiKey ? 'yes' : 'no'}, authPresent=${token ? 'yes' : 'no'}`
+    );
 
     const functionUrl = `${url}/functions/v1/${functionName}`;
     const response = await fetch(functionUrl, {
@@ -274,6 +277,8 @@ async function callFunction<T>(
         'Content-Type': 'application/json',
         'apikey': apiKey,
         'Authorization': `Bearer ${token}`,
+        'x-debug-client': 'callFunction-v2',
+        'x-debug-apikey-present': apiKey ? '1' : '0',
       },
       body: JSON.stringify(body),
     });
@@ -912,6 +917,47 @@ export async function getGuestKitZone(
   zoneId: string
 ): Promise<ApiResult<{ zone: GuestKitZone; items: GuestKitItem[] }>> {
   return callFunction('guest-kit', { action: 'get-zone', zoneId });
+}
+
+// ============================================
+// GUEST PATHWAY GENERATOR API
+// ============================================
+
+export interface PathwayResult {
+  zoneId: string;
+  zoneName: string;
+  pathwayDescription: string;
+  navigationSteps: string[];
+  landmarks: string[];
+  estimatedDistance: string;
+  difficulty: 'easy' | 'moderate' | 'complex';
+}
+
+export interface HomeLayoutResult {
+  layoutDescription: string;
+  keyLandmarks: string[];
+  zones: { name: string; direction: string; description: string }[];
+}
+
+/**
+ * Generate AI pathway from home base to a specific zone
+ * Uses Gemini Vision to analyze images and create navigation instructions
+ */
+export async function generateZonePathway(
+  kitId: string,
+  zoneId: string
+): Promise<ApiResult<{ pathway: PathwayResult }>> {
+  return callFunction('guest-pathway-generator', { kitId, zoneId });
+}
+
+/**
+ * Generate AI overview of home layout from home base images
+ * Analyzes kitchen images to identify exits and likely room locations
+ */
+export async function generateHomeLayout(
+  kitId: string
+): Promise<ApiResult<{ layout: HomeLayoutResult }>> {
+  return callFunction('guest-pathway-generator', { kitId });
 }
 
 // ============================================

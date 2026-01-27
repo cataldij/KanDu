@@ -34,6 +34,7 @@ import {
   getGuestKitZones,
   createGuestKitZone,
   updateGuestKitZone,
+  generateZonePathway,
   GuestKit,
   HomeBaseImage,
   GuestKitZone,
@@ -380,7 +381,9 @@ export default function GuestModeSetupScreen() {
         savedKitId = result.data.kit.id;
       }
 
-      // Save zones with uploaded images
+      // Save zones with uploaded images and collect zone IDs for pathway generation
+      const savedZoneIds: string[] = [];
+
       for (const zone of zones) {
         const isTemporaryZone = zone.id.startsWith('temp-');
         const zoneFolder = `${kitFolder}/zone-${zone.name.toLowerCase().replace(/\s+/g, '-')}`;
@@ -430,6 +433,9 @@ export default function GuestModeSetupScreen() {
           const result = await createGuestKitZone(zoneWithoutId);
           if (result.error) {
             console.error('Failed to create zone:', result.error);
+          } else if (result.data?.zone?.id) {
+            // Collect zone ID for pathway generation
+            savedZoneIds.push(result.data.zone.id);
           }
         } else {
           // Update existing zone
@@ -441,8 +447,29 @@ export default function GuestModeSetupScreen() {
           });
           if (result.error) {
             console.error('Failed to update zone:', result.error);
+          } else {
+            savedZoneIds.push(zone.id);
           }
         }
+      }
+
+      // Generate AI pathways in background (don't wait for completion)
+      if (savedZoneIds.length > 0 && uploadedKitchenImages.length > 0) {
+        console.log('[GuestSetup] Generating AI pathways for', savedZoneIds.length, 'zones...');
+        // Fire and forget - pathways generate in background
+        savedZoneIds.forEach((zoneId) => {
+          generateZonePathway(savedKitId, zoneId)
+            .then((result) => {
+              if (result.error) {
+                console.error('[GuestSetup] Pathway generation failed for zone', zoneId, ':', result.error);
+              } else {
+                console.log('[GuestSetup] Pathway generated for zone', zoneId);
+              }
+            })
+            .catch((err) => {
+              console.error('[GuestSetup] Pathway generation error:', err);
+            });
+        });
       }
 
       // Navigate to detail screen

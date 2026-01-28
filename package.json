@@ -18,7 +18,6 @@
     "expo": "~54.0.31",
     "expo-auth-session": "^7.0.10",
     "expo-av": "~16.0.8",
-    "expo-barcode-scanner": "^13.0.1",
     "expo-blur": "~15.0.8",
     "expo-calendar": "~15.0.8",
     "expo-camera": "~17.0.10",

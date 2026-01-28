@@ -113,7 +113,7 @@ export default function GuestModeSetupScreen() {
   const navigation = useNavigation<any>();
   const route = useRoute<any>();
 
-  const { kitId, editMode } = route.params || {};
+  const { kitId, editMode, propertyId } = route.params || {};
 
   const [currentStep, setCurrentStep] = useState(0);
   const [loading, setLoading] = useState(editMode);
@@ -354,6 +354,7 @@ export default function GuestModeSetupScreen() {
       const kitData = {
         ...data,
         home_base_images: uploadedKitchenImages,
+        ...(propertyId && !editMode ? { property_id: propertyId } : {}),
       };
 
       let savedKitId: string;

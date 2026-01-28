@@ -83,14 +83,6 @@ const ACTION_CARDS: ActionCard[] = [
     gradient: ['#FF8B5E', '#FFB84D'], // Softened orange → yellow
     route: 'DoIt',
   },
-  {
-    id: 'test',
-    icon: 'flask',
-    label: 'Store Test',
-    subtext: 'Test scraping',
-    gradient: ['#8b5cf6', '#ec4899'], // Purple → pink
-    route: 'StoreScrapingTest',
-  },
 ];
 
 function getStatusColor(status: string): string {
@@ -654,6 +646,39 @@ export default function MainHomeScreen() {
               </TouchableOpacity>
             ))}
           </View>
+
+          {/* Guest Mode Bar */}
+          <TouchableOpacity
+            onPress={() => navigation.navigate('GuestMode')}
+            activeOpacity={0.8}
+            style={styles.guestModeWrapper}
+          >
+            <LinearGradient
+              colors={['#8b5cf6', '#ec4899']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.guestModeBar}
+            >
+              {/* Glass sheen overlay */}
+              <LinearGradient
+                colors={[
+                  'rgba(255,255,255,0.3)',
+                  'rgba(255,255,255,0.1)',
+                  'rgba(255,255,255,0)',
+                ]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={StyleSheet.absoluteFill}
+                pointerEvents="none"
+              />
+              <Ionicons name="home" size={28} color="#FFFFFF" />
+              <View style={styles.guestModeText}>
+                <Text style={styles.guestModeLabel}>Guest Mode</Text>
+                <Text style={styles.guestModeSubtext}>Create guides for visitors</Text>
+              </View>
+              <Ionicons name="chevron-forward" size={24} color="rgba(255,255,255,0.7)" />
+            </LinearGradient>
+          </TouchableOpacity>
         </View>
 
         {/* In Progress section */}
@@ -1241,5 +1266,49 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#94a3b8',
     fontStyle: 'italic',
+  },
+  // Guest Mode Bar - wide and short
+  guestModeWrapper: {
+    width: '100%',
+    height: 70,
+    marginTop: 24,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  guestModeBar: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 20,
+    paddingHorizontal: 20,
+    gap: 14,
+    overflow: 'hidden',
+  },
+  guestModeText: {
+    flex: 1,
+  },
+  guestModeLabel: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    textShadowColor: 'rgba(0, 0, 0, 0.2)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  guestModeSubtext: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: 'rgba(255, 255, 255, 0.9)',
+    marginTop: 2,
+    textShadowColor: 'rgba(0, 0, 0, 0.15)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
 });

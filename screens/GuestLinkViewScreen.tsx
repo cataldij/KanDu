@@ -1100,6 +1100,14 @@ export default function GuestLinkViewScreen() {
           </Svg>
         </View>
 
+        {/* Back button */}
+        <TouchableOpacity
+          style={styles.headerBackButton}
+          onPress={() => navigation.goBack()}
+        >
+          <Ionicons name="arrow-back" size={24} color="#fff" />
+        </TouchableOpacity>
+
         <View style={styles.headerContent}>
           <Text style={styles.welcomeText}>Welcome to</Text>
           <Text style={styles.homeName}>{kit.display_name}</Text>
@@ -1325,6 +1333,15 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     position: 'relative',
     overflow: 'hidden',
+  },
+  headerBackButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 12,
   },
   headerCheckmark: {
     position: 'absolute',

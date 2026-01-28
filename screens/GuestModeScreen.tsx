@@ -30,6 +30,7 @@ import * as Clipboard from 'expo-clipboard';
 import {
   listGuestKits,
   deleteGuestKit,
+  updateGuestKit,
   listProperties,
   createProperty,
   GuestKit,
@@ -59,6 +60,21 @@ export default function GuestModeScreen() {
   const [showAddProperty, setShowAddProperty] = useState(false);
   const [newPropertyName, setNewPropertyName] = useState('');
   const [newPropertyType, setNewPropertyType] = useState<PropertyType>('primary_residence');
+  const [expandedProperties, setExpandedProperties] = useState<Set<string>>(new Set());
+  const [showMoveModal, setShowMoveModal] = useState(false);
+  const [kitToMove, setKitToMove] = useState<GuestKit | null>(null);
+
+  const togglePropertyExpanded = (propertyId: string) => {
+    setExpandedProperties((prev) => {
+      const next = new Set(prev);
+      if (next.has(propertyId)) {
+        next.delete(propertyId);
+      } else {
+        next.add(propertyId);
+      }
+      return next;
+    });
+  };
 
   const loadData = async (showLoader = true) => {
     if (showLoader) setLoading(true);
@@ -104,8 +120,8 @@ export default function GuestModeScreen() {
     loadKits(false);
   };
 
-  const handleCreateKit = () => {
-    navigation.navigate('GuestModeSetup');
+  const handleCreateKit = (propertyId?: string) => {
+    navigation.navigate('GuestModeSetup', { propertyId });
   };
 
   const handleEditKit = (kit: GuestKit) => {
@@ -132,6 +148,24 @@ export default function GuestModeScreen() {
         },
       ]
     );
+  };
+
+  const handleMoveKit = (kit: GuestKit) => {
+    setKitToMove(kit);
+    setShowMoveModal(true);
+  };
+
+  const handleMoveToProperty = async (propertyId: string | null) => {
+    if (!kitToMove) return;
+
+    const result = await updateGuestKit(kitToMove.id, { property_id: propertyId });
+    if (result.error) {
+      Alert.alert('Error', result.error);
+    } else {
+      loadKits();
+    }
+    setShowMoveModal(false);
+    setKitToMove(null);
   };
 
   const handleShareKit = async (kit: GuestKit) => {
@@ -201,47 +235,159 @@ export default function GuestModeScreen() {
     }
   };
 
-  const renderPropertySection = (property: Property | null, propertyKits: GuestKit[]) => {
-    const config = property ? PROPERTY_TYPE_CONFIG[property.property_type] : null;
+  const renderPropertyCard = (property: Property) => {
+    const config = PROPERTY_TYPE_CONFIG[property.property_type];
+    const propertyKits = kits.filter((k) => k.property_id === property.id);
+    const isExpanded = expandedProperties.has(property.id);
+    const guideCount = propertyKits.length;
 
     return (
-      <View key={property?.id || 'ungrouped'} style={styles.propertySection}>
-        {/* Property Header */}
-        <View style={styles.propertySectionHeader}>
-          {property ? (
+      <View key={property.id} style={styles.propertyCard}>
+        {/* Property Header - Tappable to expand */}
+        <TouchableOpacity
+          activeOpacity={0.9}
+          onPress={() => togglePropertyExpanded(property.id)}
+        >
+          <LinearGradient
+            colors={config.gradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+            style={styles.propertyCardHeader}
+          >
+            {/* Glass sheen overlay */}
             <LinearGradient
-              colors={config?.gradient || ['#64748b', '#94a3b8']}
+              colors={[
+                'rgba(255,255,255,0.3)',
+                'rgba(255,255,255,0.1)',
+                'rgba(255,255,255,0)',
+              ]}
               start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.propertyBadge}
-            >
-              <Ionicons name={config?.icon as any || 'home'} size={16} color="#fff" />
-              <Text style={styles.propertyBadgeText}>{property.name}</Text>
-              <Text style={styles.propertyTypeText}>{config?.label}</Text>
-            </LinearGradient>
-          ) : (
-            <View style={styles.ungroupedHeader}>
-              <Ionicons name="folder-open-outline" size={20} color="#64748b" />
-              <Text style={styles.ungroupedText}>Other Guides</Text>
-            </View>
-          )}
-        </View>
+              end={{ x: 1, y: 1 }}
+              style={StyleSheet.absoluteFill}
+              pointerEvents="none"
+            />
 
-        {/* Kits in this property */}
-        {propertyKits.length > 0 ? (
-          propertyKits.map(renderKitCard)
-        ) : property ? (
-          <View style={styles.emptyPropertyState}>
-            <Text style={styles.emptyPropertyText}>No guides for this property yet</Text>
+            <View style={styles.propertyCardContent}>
+              <View style={styles.propertyIconContainer}>
+                <Ionicons name={config.icon as any} size={28} color="#fff" />
+              </View>
+              <View style={styles.propertyInfo}>
+                <Text style={styles.propertyName}>{property.name}</Text>
+                <Text style={styles.propertyCardTypeLabel}>{config.label}</Text>
+              </View>
+              <View style={styles.propertyMeta}>
+                <View style={styles.guideCountBadge}>
+                  <Text style={styles.guideCountText}>
+                    {guideCount} {guideCount === 1 ? 'guide' : 'guides'}
+                  </Text>
+                </View>
+                <Ionicons
+                  name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                  size={24}
+                  color="rgba(255,255,255,0.8)"
+                />
+              </View>
+            </View>
+          </LinearGradient>
+        </TouchableOpacity>
+
+        {/* Expanded content with guides */}
+        {isExpanded && (
+          <View style={styles.propertyExpanded}>
+            {/* Add Guide button */}
             <TouchableOpacity
-              style={styles.addGuideButton}
-              onPress={handleCreateKit}
+              style={styles.addGuideToPropertyButton}
+              onPress={() => handleCreateKit(property.id)}
             >
-              <Ionicons name="add" size={18} color="#1E90FF" />
-              <Text style={styles.addGuideText}>Add Guide</Text>
+              <Ionicons name="add-circle" size={20} color="#1E90FF" />
+              <Text style={styles.addGuideToPropertyText}>Add Guide to {property.name}</Text>
+            </TouchableOpacity>
+
+            {/* Guides list */}
+            {propertyKits.length > 0 ? (
+              propertyKits.map((kit) => renderCompactKitCard(kit))
+            ) : (
+              <View style={styles.noGuidesYet}>
+                <Ionicons name="document-text-outline" size={32} color="#cbd5e1" />
+                <Text style={styles.noGuidesText}>No guides yet</Text>
+                <Text style={styles.noGuidesSubtext}>
+                  Create a guide for guests visiting this property
+                </Text>
+              </View>
+            )}
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  // Compact kit card for inside property cards
+  const renderCompactKitCard = (kit: GuestKit) => {
+    const itemCount = getKitItemCount(kit);
+    const isExpired = kit.expires_at && new Date(kit.expires_at) < new Date();
+
+    return (
+      <View key={kit.id} style={styles.compactKitCard}>
+        <TouchableOpacity
+          style={styles.compactKitContent}
+          onPress={() => handleViewKit(kit)}
+        >
+          <View style={styles.compactKitInfo}>
+            <Text style={styles.compactKitName}>{kit.display_name}</Text>
+            <View style={styles.compactKitMeta}>
+              <Text style={styles.compactKitStat}>{itemCount} items</Text>
+              {kit.access_pin && (
+                <>
+                  <Text style={styles.compactKitDot}>•</Text>
+                  <Ionicons name="lock-closed" size={12} color="#64748b" />
+                </>
+              )}
+              {(!kit.is_active || isExpired) && (
+                <View style={styles.compactInactiveBadge}>
+                  <Text style={styles.compactInactiveText}>
+                    {isExpired ? 'Expired' : 'Inactive'}
+                  </Text>
+                </View>
+              )}
+            </View>
+          </View>
+          <View style={styles.compactKitActions}>
+            <TouchableOpacity
+              style={styles.compactActionBtn}
+              onPress={() => handleMoveKit(kit)}
+            >
+              <Ionicons name="swap-horizontal-outline" size={18} color="#8b5cf6" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.compactActionBtn}
+              onPress={() => handleShareKit(kit)}
+            >
+              <Ionicons name="share-outline" size={18} color="#1E90FF" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.compactActionBtn}
+              onPress={() => handleEditKit(kit)}
+            >
+              <Ionicons name="create-outline" size={18} color="#64748b" />
             </TouchableOpacity>
           </View>
-        ) : null}
+        </TouchableOpacity>
+      </View>
+    );
+  };
+
+  // Render ungrouped guides (legacy guides without property)
+  const renderUngroupedKits = () => {
+    const ungroupedKits = kits.filter((k) => !k.property_id);
+    if (ungroupedKits.length === 0) return null;
+
+    return (
+      <View style={styles.ungroupedSection}>
+        <View style={styles.ungroupedHeader}>
+          <Ionicons name="folder-open-outline" size={20} color="#64748b" />
+          <Text style={styles.ungroupedText}>Unassigned Guides</Text>
+        </View>
+        {ungroupedKits.map(renderKitCard)}
       </View>
     );
   };
@@ -318,6 +464,74 @@ export default function GuestModeScreen() {
     </Modal>
   );
 
+  const renderMoveModal = () => (
+    <Modal visible={showMoveModal} transparent animationType="slide">
+      <View style={styles.modalOverlay}>
+        <View style={styles.modalContent}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Move Guide</Text>
+            <TouchableOpacity onPress={() => { setShowMoveModal(false); setKitToMove(null); }}>
+              <Ionicons name="close" size={24} color="#64748b" />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.moveModalSubtitle}>
+            Select a property for "{kitToMove?.display_name}"
+          </Text>
+
+          <ScrollView style={styles.movePropertyList}>
+            {/* Unassigned option */}
+            <TouchableOpacity
+              style={[
+                styles.movePropertyOption,
+                !kitToMove?.property_id && styles.movePropertyOptionSelected,
+              ]}
+              onPress={() => handleMoveToProperty(null)}
+            >
+              <View style={styles.movePropertyIcon}>
+                <Ionicons name="folder-open-outline" size={24} color="#64748b" />
+              </View>
+              <Text style={styles.movePropertyName}>Unassigned</Text>
+              {!kitToMove?.property_id && (
+                <Ionicons name="checkmark-circle" size={24} color="#10b981" />
+              )}
+            </TouchableOpacity>
+
+            {/* Property options */}
+            {properties.map((property) => {
+              const config = PROPERTY_TYPE_CONFIG[property.property_type];
+              const isCurrentProperty = kitToMove?.property_id === property.id;
+              return (
+                <TouchableOpacity
+                  key={property.id}
+                  style={[
+                    styles.movePropertyOption,
+                    isCurrentProperty && styles.movePropertyOptionSelected,
+                  ]}
+                  onPress={() => handleMoveToProperty(property.id)}
+                >
+                  <LinearGradient
+                    colors={config.gradient}
+                    style={styles.movePropertyIconGradient}
+                  >
+                    <Ionicons name={config.icon as any} size={20} color="#fff" />
+                  </LinearGradient>
+                  <View style={styles.movePropertyInfo}>
+                    <Text style={styles.movePropertyName}>{property.name}</Text>
+                    <Text style={styles.movePropertyType}>{config.label}</Text>
+                  </View>
+                  {isCurrentProperty && (
+                    <Ionicons name="checkmark-circle" size={24} color="#10b981" />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
+  );
+
   const renderEmptyState = () => (
     <View style={styles.emptyState}>
       <View style={styles.emptyIconContainer}>
@@ -327,17 +541,18 @@ export default function GuestModeScreen() {
           end={{ x: 1, y: 1 }}
           style={styles.emptyIconGradient}
         >
-          <Ionicons name="home-outline" size={48} color="#fff" />
+          <Ionicons name="business-outline" size={48} color="#fff" />
         </LinearGradient>
       </View>
-      <Text style={styles.emptyTitle}>No Home Guides Yet</Text>
+      <Text style={styles.emptyTitle}>Welcome to Guest Mode</Text>
       <Text style={styles.emptySubtitle}>
-        Create a shareable guide so babysitters, guests, and visitors can find
-        everything they need — from the WiFi password to the water shutoff.
+        Create shareable guides for your properties so babysitters, guests, and
+        visitors can find everything they need — from WiFi to the water shutoff.
       </Text>
+      <Text style={styles.emptyStepText}>Step 1: Add your first property</Text>
       <TouchableOpacity
         style={styles.emptyButton}
-        onPress={handleCreateKit}
+        onPress={() => setShowAddProperty(true)}
         activeOpacity={0.8}
       >
         <LinearGradient
@@ -347,9 +562,27 @@ export default function GuestModeScreen() {
           style={styles.emptyButtonGradient}
         >
           <Ionicons name="add" size={24} color="#fff" style={{ marginRight: 8 }} />
-          <Text style={styles.emptyButtonText}>Create Your First Guide</Text>
+          <Text style={styles.emptyButtonText}>Add Your First Property</Text>
         </LinearGradient>
       </TouchableOpacity>
+
+      {/* Property type preview */}
+      <View style={styles.propertyTypePreview}>
+        {(Object.keys(PROPERTY_TYPE_CONFIG) as PropertyType[]).map((type) => {
+          const config = PROPERTY_TYPE_CONFIG[type];
+          return (
+            <View key={type} style={styles.propertyTypePreviewItem}>
+              <LinearGradient
+                colors={config.gradient}
+                style={styles.propertyTypePreviewIcon}
+              >
+                <Ionicons name={config.icon as any} size={16} color="#fff" />
+              </LinearGradient>
+              <Text style={styles.propertyTypePreviewLabel}>{config.label}</Text>
+            </View>
+          );
+        })}
+      </View>
     </View>
   );
 
@@ -476,6 +709,14 @@ export default function GuestModeScreen() {
 
           <TouchableOpacity
             style={styles.kitActionButton}
+            onPress={() => handleMoveKit(kit)}
+          >
+            <Ionicons name="swap-horizontal-outline" size={20} color="#8b5cf6" />
+            <Text style={[styles.kitActionText, { color: '#8b5cf6' }]}>Move</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.kitActionButton}
             onPress={() => handleDeleteKit(kit)}
           >
             <Ionicons name="trash-outline" size={20} color="#ef4444" />
@@ -567,63 +808,35 @@ export default function GuestModeScreen() {
               <Text style={styles.retryButtonText}>Try Again</Text>
             </TouchableOpacity>
           </View>
-        ) : kits.length === 0 && properties.length === 0 ? (
+        ) : properties.length === 0 ? (
           renderEmptyState()
         ) : (
           <>
-            {/* Action buttons row */}
-            <View style={styles.actionButtonsRow}>
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={handleCreateKit}
-                activeOpacity={0.8}
-              >
-                <LinearGradient
-                  colors={['#1E90FF', '#00CBA9']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.actionButtonGradient}
-                >
-                  <Ionicons name="add-circle-outline" size={20} color="#fff" />
-                  <Text style={styles.actionButtonText}>New Guide</Text>
-                </LinearGradient>
-              </TouchableOpacity>
+            {/* Add Property button */}
+            <TouchableOpacity
+              style={styles.addPropertyButton}
+              onPress={() => setShowAddProperty(true)}
+              activeOpacity={0.8}
+            >
+              <Ionicons name="add-circle" size={22} color="#A855F7" />
+              <Text style={styles.addPropertyButtonText}>Add Another Property</Text>
+            </TouchableOpacity>
 
-              <TouchableOpacity
-                style={styles.actionButton}
-                onPress={() => setShowAddProperty(true)}
-                activeOpacity={0.8}
-              >
-                <LinearGradient
-                  colors={['#A855F7', '#EC4899']}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.actionButtonGradient}
-                >
-                  <Ionicons name="business-outline" size={20} color="#fff" />
-                  <Text style={styles.actionButtonText}>Add Property</Text>
-                </LinearGradient>
-              </TouchableOpacity>
-            </View>
+            {/* Property cards */}
+            <Text style={styles.sectionTitle}>Your Properties</Text>
+            {properties.map(renderPropertyCard)}
 
-            {/* Property sections with grouped kits */}
-            {properties.length > 0 || kits.length > 0 ? (
-              getGroupedKits().map(({ property, kits: propertyKits }) =>
-                renderPropertySection(property, propertyKits)
-              )
-            ) : (
-              <View style={styles.emptyPropertyState}>
-                <Text style={styles.emptyPropertyText}>
-                  Add a property to organize your guides
-                </Text>
-              </View>
-            )}
+            {/* Ungrouped guides (legacy) */}
+            {renderUngroupedKits()}
           </>
         )}
       </ScrollView>
 
       {/* Add Property Modal */}
       {renderAddPropertyModal()}
+
+      {/* Move Guide Modal */}
+      {renderMoveModal()}
     </View>
   );
 }
@@ -899,17 +1112,18 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff',
     borderTopWidth: 1,
     borderTopColor: '#e2e8f0',
+    paddingHorizontal: 4,
   },
   kitActionButton: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 14,
+    paddingVertical: 12,
     flexDirection: 'row',
-    gap: 6,
+    gap: 3,
   },
   kitActionText: {
-    fontSize: 14,
+    fontSize: 11,
     fontWeight: '600',
     color: '#1E90FF',
   },
@@ -1054,6 +1268,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 2,
     borderColor: '#e2e8f0',
+    backgroundColor: '#fff',
   },
   propertyTypeOptionSelected: {
     borderColor: '#1E90FF',
@@ -1072,6 +1287,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#64748b',
     textAlign: 'center',
+    width: '100%',
   },
   propertyTypeLabelSelected: {
     color: '#1E90FF',
@@ -1089,5 +1305,278 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     color: '#fff',
+  },
+
+  // Move modal styles
+  moveModalSubtitle: {
+    fontSize: 15,
+    color: '#64748b',
+    marginBottom: 20,
+  },
+  movePropertyList: {
+    maxHeight: 350,
+  },
+  movePropertyOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    marginBottom: 10,
+    gap: 14,
+  },
+  movePropertyOptionSelected: {
+    backgroundColor: '#ecfdf5',
+    borderWidth: 2,
+    borderColor: '#10b981',
+  },
+  movePropertyIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#e2e8f0',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  movePropertyIconGradient: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  movePropertyInfo: {
+    flex: 1,
+  },
+  movePropertyName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1e293b',
+  },
+  movePropertyType: {
+    fontSize: 13,
+    color: '#64748b',
+    marginTop: 2,
+  },
+
+  // Empty state step text
+  emptyStepText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1E90FF',
+    marginBottom: 16,
+  },
+
+  // Property type preview in empty state
+  propertyTypePreview: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 24,
+    marginTop: 32,
+  },
+  propertyTypePreviewItem: {
+    alignItems: 'center',
+  },
+  propertyTypePreviewIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  propertyTypePreviewLabel: {
+    fontSize: 11,
+    color: '#64748b',
+    textAlign: 'center',
+  },
+
+  // Add property button (when properties exist)
+  addPropertyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    backgroundColor: '#faf5ff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e9d5ff',
+    borderStyle: 'dashed',
+    marginBottom: 20,
+  },
+  addPropertyButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#A855F7',
+  },
+
+  // Property card styles
+  propertyCard: {
+    marginBottom: 16,
+    borderRadius: 16,
+    backgroundColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+    overflow: 'hidden',
+  },
+  propertyCardHeader: {
+    padding: 16,
+    position: 'relative',
+    overflow: 'hidden',
+  },
+  propertyCardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    zIndex: 1,
+  },
+  propertyIconContainer: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 14,
+  },
+  propertyInfo: {
+    flex: 1,
+  },
+  propertyName: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 2,
+  },
+  propertyCardTypeLabel: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.8)',
+  },
+  propertyMeta: {
+    alignItems: 'flex-end',
+  },
+  guideCountBadge: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginBottom: 6,
+  },
+  guideCountText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#fff',
+  },
+
+  // Property expanded content
+  propertyExpanded: {
+    padding: 16,
+    paddingTop: 8,
+    backgroundColor: '#f8fafc',
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+  },
+  addGuideToPropertyButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    marginBottom: 12,
+  },
+  addGuideToPropertyText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1E90FF',
+  },
+  noGuidesYet: {
+    alignItems: 'center',
+    paddingVertical: 20,
+  },
+  noGuidesText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#94a3b8',
+    marginTop: 8,
+  },
+  noGuidesSubtext: {
+    fontSize: 13,
+    color: '#cbd5e1',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+
+  // Compact kit card (inside property)
+  compactKitCard: {
+    backgroundColor: '#fff',
+    borderRadius: 10,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+  },
+  compactKitContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+  },
+  compactKitInfo: {
+    flex: 1,
+  },
+  compactKitName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1e293b',
+    marginBottom: 4,
+  },
+  compactKitMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  compactKitStat: {
+    fontSize: 13,
+    color: '#64748b',
+  },
+  compactKitDot: {
+    color: '#cbd5e1',
+  },
+  compactInactiveBadge: {
+    backgroundColor: '#fef2f2',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
+    marginLeft: 6,
+  },
+  compactInactiveText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#ef4444',
+  },
+  compactKitActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  compactActionBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#f1f5f9',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Ungrouped section
+  ungroupedSection: {
+    marginTop: 24,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
   },
 });

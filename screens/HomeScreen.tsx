@@ -34,6 +34,7 @@ type RootStackParamList = {
   };
   DiagnosisHistory: undefined;
   Auth: { mode?: 'login' | 'signup' };
+  GuestMode: undefined;
 };
 
 type HomeScreenProps = {
@@ -537,6 +538,25 @@ export default function HomeScreen({ navigation }: HomeScreenProps) {
           </TouchableOpacity>
         ))}
       </View>
+
+      {/* Guest Mode Tile */}
+      {user && (
+        <TouchableOpacity
+          onPress={() => navigation.navigate('GuestMode')}
+          activeOpacity={0.8}
+          style={styles.guestModeTileWrapper}
+        >
+          <LinearGradient
+            colors={['#8B5CF6', '#EC4899']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.guestModeTile}
+          >
+            <Text style={styles.guestModeTileEmoji}>🏠</Text>
+            <Text style={styles.guestModeTileTitle}>Guest Mode</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+      )}
 
       {/* Register CTA - only show when logged out */}
       {!user && (
@@ -1558,6 +1578,41 @@ const styles = StyleSheet.create({
   notificationListItemSubtitle: {
     fontSize: 13,
     color: '#64748b',
+  },
+  guestModeTileWrapper: {
+    width: 316,
+    height: 70,
+    marginTop: 16,
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  guestModeTile: {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 20,
+    paddingHorizontal: 20,
+    gap: 12,
+  },
+  guestModeTileEmoji: {
+    fontSize: 32,
+  },
+  guestModeTileTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    textShadowColor: 'rgba(0, 0, 0, 0.2)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
 });
 

@@ -5,7 +5,7 @@
  * Includes scan-based navigation with AI assistance.
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,7 @@ import {
   Dimensions,
   Modal,
   Animated,
+  Platform,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,6 +28,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Clipboard from 'expo-clipboard';
+import * as Haptics from 'expo-haptics';
+import { Gyroscope } from 'expo-sensors';
 import Svg, { Path, Defs, LinearGradient as SvgLinearGradient, Stop, Polygon, Circle as SvgCircle } from 'react-native-svg';
 
 // Create animated Path component for countdown ring
@@ -112,20 +115,21 @@ export default function GuestLinkViewScreen() {
   const autoScanTimer = useRef<NodeJS.Timeout | null>(null);
   const scanAnimationRef = useRef<Animated.CompositeAnimation | null>(null);
 
-  // Adaptive timing based on direction - longer delays for bigger turns
-  const getAutoScanInterval = () => {
-    switch (moveDirection) {
-      case 'back':
-        return 4000; // 4 seconds for 180° turn
-      case 'left':
-      case 'right':
-      case 'slight_left':
-      case 'slight_right':
-      case 'forward':
-      default:
-        return 3000; // 3 seconds for forward and turns
-    }
-  };
+  // Gyroscope-based stabilization state
+  const [isStabilized, setIsStabilized] = useState(false);
+  const [gyroEnabled, setGyroEnabled] = useState(true);
+  const gyroSubscription = useRef<any>(null);
+  const stabilizeTimeout = useRef<NodeJS.Timeout | null>(null);
+  const lastMovementTime = useRef<number>(Date.now());
+  const stabilizeProgress = useRef(new Animated.Value(0)).current;
+
+  // Spring animation for arrow rotation
+  const arrowRotation = useRef(new Animated.Value(0)).current;
+  const previousDirection = useRef<string | null>(null);
+
+  // Constants for stabilization detection
+  const GYRO_THRESHOLD = 0.15; // rad/s - below this is considered "still"
+  const STABILIZE_DURATION = 500; // ms - how long to hold still before scanning
 
   // Pulsing animation for highlight overlay
   useEffect(() => {
@@ -149,7 +153,7 @@ export default function GuestLinkViewScreen() {
     }
   }, [cameraHighlight]);
 
-  // Floor arrow animation - gentle bouncing motion
+  // Floor arrow animation - gentle bouncing motion + spring rotation
   useEffect(() => {
     if (moveDirection && moveDirection !== 'arrived') {
       // Fade in
@@ -158,6 +162,25 @@ export default function GuestLinkViewScreen() {
         duration: 300,
         useNativeDriver: true,
       }).start();
+
+      // Calculate target rotation
+      const targetRotation = getArrowRotationDegrees(moveDirection);
+
+      // Spring animation for smooth rotation when direction changes
+      if (previousDirection.current !== moveDirection) {
+        // Haptic feedback when direction changes
+        if (previousDirection.current !== null) {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        }
+        previousDirection.current = moveDirection;
+
+        Animated.spring(arrowRotation, {
+          toValue: targetRotation,
+          tension: 40,
+          friction: 7,
+          useNativeDriver: true,
+        }).start();
+      }
 
       // Bouncing animation to suggest movement
       const bounce = Animated.loop(
@@ -186,34 +209,67 @@ export default function GuestLinkViewScreen() {
     }
   }, [moveDirection]);
 
-  // Auto-scan timer - continuous scanning for seamless navigation
-  // Uses adaptive timing: longer delays for bigger turns (back=5s, turns=4s, forward=3.5s)
+  // Gyroscope-based stabilization detection
+  // When user holds phone still for STABILIZE_DURATION, trigger scan
   useEffect(() => {
-    if (showCamera && autoScanEnabled && !frozenFrame && !scanning) {
-      const interval = getAutoScanInterval();
+    if (showCamera && autoScanEnabled && !frozenFrame && !scanning && gyroEnabled) {
+      // Set up gyroscope
+      Gyroscope.setUpdateInterval(100); // 10 Hz updates
 
-      // Start countdown animation
-      scanProgress.setValue(0);
-      scanAnimationRef.current = Animated.timing(scanProgress, {
-        toValue: 1,
-        duration: interval,
-        useNativeDriver: false,
-      });
+      gyroSubscription.current = Gyroscope.addListener((data) => {
+        // Calculate total rotation rate
+        const rotationRate = Math.sqrt(
+          data.x * data.x + data.y * data.y + data.z * data.z
+        );
 
-      scanAnimationRef.current.start(({ finished }) => {
-        if (finished && showCamera && autoScanEnabled && !frozenFrame) {
-          // Trigger auto-scan
-          handleAutoScan();
+        if (rotationRate > GYRO_THRESHOLD) {
+          // User is moving - reset stabilization
+          lastMovementTime.current = Date.now();
+          if (isStabilized) {
+            setIsStabilized(false);
+          }
+          // Reset progress animation
+          stabilizeProgress.setValue(0);
+          // Clear any pending scan
+          if (stabilizeTimeout.current) {
+            clearTimeout(stabilizeTimeout.current);
+            stabilizeTimeout.current = null;
+          }
+        } else {
+          // User is holding still - check how long
+          const stillDuration = Date.now() - lastMovementTime.current;
+
+          // Animate progress toward 100%
+          const progress = Math.min(stillDuration / STABILIZE_DURATION, 1);
+          stabilizeProgress.setValue(progress);
+
+          if (stillDuration >= STABILIZE_DURATION && !isStabilized && !scanning) {
+            // User has been still long enough - trigger scan!
+            setIsStabilized(true);
+            // Haptic feedback to indicate scan is triggering
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            handleAutoScan();
+          }
         }
       });
 
       return () => {
-        if (scanAnimationRef.current) {
-          scanAnimationRef.current.stop();
+        if (gyroSubscription.current) {
+          gyroSubscription.current.remove();
+          gyroSubscription.current = null;
+        }
+        if (stabilizeTimeout.current) {
+          clearTimeout(stabilizeTimeout.current);
         }
       };
+    } else {
+      // Clean up when camera is closed
+      if (gyroSubscription.current) {
+        gyroSubscription.current.remove();
+        gyroSubscription.current = null;
+      }
     }
-  }, [showCamera, autoScanEnabled, frozenFrame, scanning, scanResult, moveDirection]);
+  }, [showCamera, autoScanEnabled, frozenFrame, scanning, gyroEnabled, isStabilized]);
 
   // Cleanup on camera close
   useEffect(() => {
@@ -221,8 +277,16 @@ export default function GuestLinkViewScreen() {
       setFrozenFrame(null);
       setAutoScanEnabled(true);
       scanProgress.setValue(0);
+      stabilizeProgress.setValue(0);
+      setIsStabilized(false);
+      previousDirection.current = null;
+      arrowRotation.setValue(0);
       if (scanAnimationRef.current) {
         scanAnimationRef.current.stop();
+      }
+      if (gyroSubscription.current) {
+        gyroSubscription.current.remove();
+        gyroSubscription.current = null;
       }
     }
   }, [showCamera]);
@@ -330,13 +394,23 @@ export default function GuestLinkViewScreen() {
         // Set the floor arrow direction
         if (result.data.navigation.arrived) {
           setMoveDirection('arrived');
+          // Strong haptic feedback for arrival!
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           // FREEZE FRAME: Stop auto-scan and show captured image
           setAutoScanEnabled(false);
           setFrozenFrame(`data:image/jpeg;base64,${photo.base64}`);
         } else if (result.data.navigation.move_direction) {
           setMoveDirection(result.data.navigation.move_direction);
+          // Reset stabilization for next scan cycle
+          setIsStabilized(false);
+          stabilizeProgress.setValue(0);
+          lastMovementTime.current = Date.now();
         } else {
           setMoveDirection('forward');
+          // Reset stabilization for next scan cycle
+          setIsStabilized(false);
+          stabilizeProgress.setValue(0);
+          lastMovementTime.current = Date.now();
         }
 
         // Update instruction overlay
@@ -393,6 +467,8 @@ export default function GuestLinkViewScreen() {
     setMoveDirection(null);
     setFrozenFrame(null);
     setAutoScanEnabled(true);
+    setIsStabilized(false);
+    stabilizeProgress.setValue(0);
   };
 
   const handleContinueToResults = () => {
@@ -401,11 +477,13 @@ export default function GuestLinkViewScreen() {
     setMoveDirection(null);
     setFrozenFrame(null);
     setAutoScanEnabled(true);
+    setIsStabilized(false);
+    stabilizeProgress.setValue(0);
   };
 
   // Get rotation angle for floor arrow based on direction
-  const getArrowRotation = () => {
-    switch (moveDirection) {
+  const getArrowRotationDegrees = (direction: string | null): number => {
+    switch (direction) {
       case 'forward': return 0;
       case 'slight_right': return 45;
       case 'right': return 90;
@@ -597,10 +675,10 @@ export default function GuestLinkViewScreen() {
               <Ionicons name="close" size={28} color="#fff" />
             </TouchableOpacity>
 
-            {/* Center: Title or Countdown Ring */}
+            {/* Center: Title or Stabilization Indicator */}
             <View style={styles.cameraHeaderCenter}>
               {!frozenFrame && autoScanEnabled && !scanning ? (
-                <View style={styles.countdownContainer}>
+                <View style={styles.stabilizeContainer}>
                   <Svg width={ringSize} height={ringSize} style={styles.countdownRing}>
                     {/* Background circle */}
                     <Path
@@ -609,23 +687,24 @@ export default function GuestLinkViewScreen() {
                       stroke="rgba(255,255,255,0.2)"
                       strokeWidth={ringStrokeWidth}
                     />
-                    {/* Progress circle */}
+                    {/* Progress circle - fills as user holds still */}
                     <AnimatedPath
                       d={`M ${ringSize/2} ${ringStrokeWidth/2} A ${ringRadius} ${ringRadius} 0 1 1 ${ringSize/2 - 0.01} ${ringStrokeWidth/2}`}
                       fill="none"
-                      stroke="#1E90FF"
+                      stroke="#10b981"
                       strokeWidth={ringStrokeWidth}
                       strokeLinecap="round"
                       strokeDasharray={`${ringCircumference}`}
-                      strokeDashoffset={scanProgress.interpolate({
+                      strokeDashoffset={stabilizeProgress.interpolate({
                         inputRange: [0, 1],
                         outputRange: [ringCircumference, 0],
                       })}
                     />
                   </Svg>
                   <View style={styles.countdownInner}>
-                    <Ionicons name="scan-outline" size={18} color="#fff" />
+                    <Ionicons name="hand-left-outline" size={16} color="#fff" />
                   </View>
+                  <Text style={styles.holdSteadyText}>Hold steady</Text>
                 </View>
               ) : scanning ? (
                 <View style={styles.scanningIndicator}>
@@ -700,7 +779,11 @@ export default function GuestLinkViewScreen() {
                     opacity: arrowOpacity,
                     transform: [
                       { translateY: arrowBounce },
-                      { rotate: `${getArrowRotation()}deg` },
+                      { rotate: arrowRotation.interpolate({
+                          inputRange: [-180, 180],
+                          outputRange: ['-180deg', '180deg'],
+                        })
+                      },
                     ],
                   },
                 ]}
@@ -1552,6 +1635,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
+  stabilizeContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   countdownRing: {
     position: 'absolute',
     transform: [{ rotate: '-90deg' }],
@@ -1563,6 +1650,13 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.4)',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  holdSteadyText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 4,
+    opacity: 0.9,
   },
   scanningIndicator: {
     flexDirection: 'row',

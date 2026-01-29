@@ -83,9 +83,9 @@ export type RootStackParamList = {
   HouseholdSetup: undefined;
   Favorites: undefined;
   GuestMode: undefined;
-  GuestModeSetup: { kitId?: string };
-  GuestKitDetail: { kitId: string };
-  AddSafetyItem: { kitId: string; itemId?: string };
+  GuestModeSetup: { kitId?: string; editMode?: boolean; propertyId?: string };
+  GuestKitDetail: { kitId: string; isNew?: boolean };
+  AddSafetyItem: { kitId: string; itemId?: string; editMode?: boolean };
   GuestLinkView: { slug: string };
   ShoppingList: { listId?: string };
   Recipes: undefined;

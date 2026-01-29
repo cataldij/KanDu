@@ -284,6 +284,7 @@ Deno.serve(async (req) => {
           checkin_instructions: kit.checkin_instructions || null,
           checkout_instructions: kit.checkout_instructions || null,
           house_rules: kit.house_rules || null,
+          property_id: kit.property_id || null,
         };
 
         console.log('[guest-kit] Inserting kit into database...');

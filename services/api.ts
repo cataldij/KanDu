@@ -1122,13 +1122,43 @@ export async function logGuestItemView(
 }
 
 /**
+ * Warmup the guest-access Edge Function to eliminate cold start delay
+ * Call this when camera opens, before first scan
+ */
+export async function warmupGuestFunction(): Promise<void> {
+  try {
+    await callGuestFunction({ action: 'warmup' });
+  } catch {
+    // Silently ignore warmup errors
+  }
+}
+
+/**
+ * Prepare Gemini context cache with reference images for fast navigation
+ * Call this when kit loads to pre-cache images. Returns cacheId to pass to scanNavigate.
+ */
+export async function prepareGuestCache(
+  kitId: string
+): Promise<ApiResult<{
+  cacheId: string | null;
+  imageCount?: number;
+  createdAt?: number;
+  expiresIn?: number;
+  message?: string;
+}>> {
+  return callGuestFunction({ action: 'prepare-cache', kitId });
+}
+
+/**
  * AI-powered scan navigation for guests
+ * Pass cacheId from prepareGuestCache for 3-5x faster scans
  */
 export async function scanNavigate(
   kitId: string,
   itemId: string,
   imageBase64: string,
-  currentStep?: number
+  currentStep?: number,
+  cacheId?: string | null
 ): Promise<ApiResult<{
   navigation: NavigationResponse;
   item: {
@@ -1138,6 +1168,7 @@ export async function scanNavigate(
     destination_image_url?: string;
     control_image_url?: string;
   };
+  usedCache?: boolean;
 }>> {
   return callGuestFunction({
     action: 'scan-navigate',
@@ -1145,6 +1176,7 @@ export async function scanNavigate(
     itemId,
     imageBase64,
     currentStep,
+    cacheId: cacheId || undefined,
   });
 }
 

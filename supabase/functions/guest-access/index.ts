@@ -6,7 +6,9 @@
  *   - action: 'get-kit' - Get kit by slug (for guests)
  *   - action: 'verify-pin' - Verify access PIN
  *   - action: 'log-access' - Log access for analytics
- *   - action: 'scan-navigate' - AI-powered navigation assistance
+ *   - action: 'prepare-cache' - Create Gemini context cache with reference images
+ *   - action: 'scan-navigate' - AI-powered navigation assistance (uses cache if available)
+ *   - action: 'warmup' - Ping to wake up the function (for cold start)
  */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.90.1';
@@ -14,11 +16,15 @@ import { GoogleGenerativeAI } from 'https://esm.sh/@google/generative-ai@0.24.1'
 import { corsHeaders, handleCors } from '../_shared/cors.ts';
 import { errorResponse, successResponse } from '../_shared/auth.ts';
 
+// Gemini API base URL for context caching
+const GEMINI_API_BASE = 'https://generativelanguage.googleapis.com/v1beta';
+
 interface ScanRequest {
   kitId: string;
   itemId: string;
   imageBase64: string;
   currentStep?: number;
+  cacheId?: string; // Optional: use cached context instead of re-sending images
 }
 
 interface NavigationResponse {
@@ -60,6 +66,166 @@ Deno.serve(async (req) => {
 
     switch (action) {
       // ============================================
+      // WARMUP (Wake up the function to eliminate cold start)
+      // ============================================
+      case 'warmup': {
+        console.log('[warmup] Function warmed up');
+        return successResponse({ warmed: true, timestamp: Date.now() });
+      }
+
+      // ============================================
+      // PREPARE CACHE - Create Gemini context cache with reference images
+      // Call this when kit loads to pre-cache images for fast subsequent scans
+      // ============================================
+      case 'prepare-cache': {
+        const { kitId } = body as { kitId: string };
+
+        if (!kitId) {
+          return errorResponse('kitId is required', 400);
+        }
+
+        const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
+        if (!GEMINI_API_KEY) {
+          return errorResponse('AI service not configured', 500);
+        }
+
+        console.log(`[prepare-cache] Starting cache creation for kit: ${kitId}`);
+        const cacheStart = Date.now();
+
+        // Get the kit with reference images
+        const { data: kit, error: kitError } = await supabase
+          .from('guest_kits')
+          .select('*')
+          .eq('id', kitId)
+          .eq('is_active', true)
+          .single();
+
+        if (kitError || !kit) {
+          return errorResponse('Kit not found', 404);
+        }
+
+        const homeBaseImages = kit.home_base_images || [];
+        if (homeBaseImages.length === 0) {
+          console.log(`[prepare-cache] No reference images for kit ${kitId}`);
+          return successResponse({ cacheId: null, message: 'No reference images to cache' });
+        }
+
+        // Helper to fetch and convert image to base64
+        const fetchImageAsBase64 = async (url: string, label: string): Promise<{ base64: string; label: string } | null> => {
+          try {
+            const imgResponse = await fetch(url);
+            if (imgResponse.ok) {
+              const imgBuffer = await imgResponse.arrayBuffer();
+              const bytes = new Uint8Array(imgBuffer);
+              let binary = '';
+              const chunkSize = 8192;
+              for (let i = 0; i < bytes.length; i += chunkSize) {
+                const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+                binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+              }
+              return { base64: btoa(binary), label };
+            }
+          } catch (e) {
+            console.log(`[prepare-cache] Could not fetch image: ${label}`, e);
+          }
+          return null;
+        };
+
+        // Fetch all kitchen reference images in parallel
+        console.log(`[prepare-cache] Fetching ${homeBaseImages.length} reference images...`);
+        const imageFetches = homeBaseImages
+          .filter((img: { url?: string }) => img.url)
+          .map((img: { url: string; angle: string }) =>
+            fetchImageAsBase64(img.url, `Kitchen ${img.angle.toUpperCase()}`)
+          );
+
+        const imageResults = await Promise.all(imageFetches);
+        const validImages = imageResults.filter((r: { base64: string; label: string } | null): r is { base64: string; label: string } => r !== null);
+
+        if (validImages.length === 0) {
+          console.log(`[prepare-cache] Failed to fetch any images`);
+          return successResponse({ cacheId: null, message: 'Failed to fetch reference images' });
+        }
+
+        console.log(`[prepare-cache] Fetched ${validImages.length} images in ${Date.now() - cacheStart}ms`);
+
+        // Build the system instruction with kitchen context
+        const angleDescriptions = homeBaseImages.map((img: { angle: string }) => {
+          const angleName = img.angle === 'front' ? 'FRONT (0°)' :
+                           img.angle === 'front_right' ? 'FRONT-RIGHT (45°)' :
+                           img.angle === 'right' ? 'RIGHT (90°)' :
+                           img.angle === 'back_right' ? 'BACK-RIGHT (135°)' :
+                           img.angle === 'back' ? 'BACK (180°)' :
+                           img.angle === 'back_left' ? 'BACK-LEFT (225°)' :
+                           img.angle === 'left' ? 'LEFT (270°)' :
+                           img.angle === 'front_left' ? 'FRONT-LEFT (315°)' :
+                           img.angle === 'exit' ? 'EXIT DOORWAY' : img.angle;
+          return `  - ${angleName}`;
+        }).join('\n');
+
+        const systemInstruction = `You are an AI navigation assistant helping guests find items in a home.
+
+KITCHEN (HOME BASE) - 360° Reference Images:
+${angleDescriptions}
+
+SPATIAL REASONING - CRITICAL:
+The kitchen reference images form a 360° panorama from the CENTER of the kitchen:
+  FRONT (0°) → FRONT-RIGHT (45°) → RIGHT (90°) → BACK-RIGHT (135°) →
+  BACK (180°) → BACK-LEFT (225°) → LEFT (270°) → FRONT-LEFT (315°) → back to FRONT
+
+When analyzing a guest's camera view:
+1. MATCH their view to the reference images by visual features (counters, appliances, windows, doorways)
+2. IDENTIFY which angle (0°, 45°, 90°, etc.) they are currently facing
+3. CALCULATE the turn needed to reach the destination
+
+The following images are the kitchen reference scans in order:`;
+
+        // Build the cached content parts
+        const cachedParts: Array<{ text: string } | { inline_data: { mime_type: string; data: string } }> = [];
+
+        // Add each reference image with its label
+        for (const img of validImages) {
+          cachedParts.push({ inline_data: { mime_type: 'image/jpeg', data: img.base64 } });
+          cachedParts.push({ text: `[REFERENCE: ${img.label}]` });
+        }
+
+        // Create the cache via Gemini REST API
+        try {
+          const cacheResponse = await fetch(`${GEMINI_API_BASE}/cachedContents?key=${GEMINI_API_KEY}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'models/gemini-2.0-flash',
+              displayName: `kit-${kitId}-${Date.now()}`,
+              systemInstruction: { parts: [{ text: systemInstruction }] },
+              contents: [{ role: 'user', parts: cachedParts }],
+              ttl: '3600s', // 1 hour TTL
+            }),
+          });
+
+          if (!cacheResponse.ok) {
+            const errorText = await cacheResponse.text();
+            console.error(`[prepare-cache] Cache creation failed: ${cacheResponse.status} - ${errorText}`);
+            return successResponse({ cacheId: null, message: 'Cache creation failed', error: errorText });
+          }
+
+          const cacheData = await cacheResponse.json();
+          const cacheId = cacheData.name; // e.g., "cachedContents/abc123"
+
+          console.log(`[prepare-cache] Cache created: ${cacheId} in ${Date.now() - cacheStart}ms`);
+
+          return successResponse({
+            cacheId,
+            imageCount: validImages.length,
+            createdAt: Date.now(),
+            expiresIn: 3600, // seconds
+          });
+        } catch (cacheError) {
+          console.error('[prepare-cache] Cache creation error:', cacheError);
+          return successResponse({ cacheId: null, message: 'Cache creation error' });
+        }
+      }
+
       // GET KIT BY SLUG (Public access)
       // ============================================
       case 'get-kit': {
@@ -205,32 +371,30 @@ Deno.serve(async (req) => {
       }
 
       // ============================================
-      // AI SCAN NAVIGATION (Zone-based)
+      // AI SCAN NAVIGATION (Zone-based) - Uses cache if available
       // ============================================
       case 'scan-navigate': {
-        const { kitId, itemId, imageBase64, currentStep } = body as ScanRequest;
+        const { kitId, itemId, imageBase64, currentStep, cacheId } = body as ScanRequest;
 
         if (!kitId || !itemId || !imageBase64) {
           return errorResponse('kitId, itemId, and imageBase64 are required', 400);
         }
 
-        // Get the kit and item
-        const { data: kit, error: kitError } = await supabase
-          .from('guest_kits')
-          .select('*')
-          .eq('id', kitId)
-          .eq('is_active', true)
-          .single();
+        const scanStart = Date.now();
+        console.log(`[scan-navigate] Starting scan for kit: ${kitId}, item: ${itemId}, cacheId: ${cacheId || 'none'}`);
+
+        // Get the kit and item in parallel for speed
+        const [kitResult, itemResult] = await Promise.all([
+          supabase.from('guest_kits').select('*').eq('id', kitId).eq('is_active', true).single(),
+          supabase.from('guest_kit_items').select('*').eq('id', itemId).single(),
+        ]);
+
+        const { data: kit, error: kitError } = kitResult;
+        const { data: item, error: itemError } = itemResult;
 
         if (kitError || !kit) {
           return errorResponse('Kit not found', 404);
         }
-
-        const { data: item, error: itemError } = await supabase
-          .from('guest_kit_items')
-          .select('*')
-          .eq('id', itemId)
-          .single();
 
         if (itemError || !item) {
           return errorResponse('Item not found', 404);
@@ -247,6 +411,8 @@ Deno.serve(async (req) => {
           zone = zoneData;
         }
 
+        console.log(`[scan-navigate] DB queries complete in ${Date.now() - scanStart}ms`);
+
         // Initialize Gemini
         const GEMINI_API_KEY = Deno.env.get('GEMINI_API_KEY');
         if (!GEMINI_API_KEY) {
@@ -254,7 +420,7 @@ Deno.serve(async (req) => {
         }
 
         const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-        const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+        const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
         // Build the navigation context
         const itemName = item.custom_name || getItemTypeName(item.item_type);
@@ -412,11 +578,115 @@ IMPORTANT for "highlight.region":
 - For example, if the fire extinguisher is visible in the center-right of the image: x=0.7, y=0.5, width=0.15, height=0.25
 - If you cannot identify a specific region to highlight, omit the "region" field but still provide "description".`;
 
+        // Clean the guest's image base64
+        const cleanedImageBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+
+        // =============================================
+        // FAST PATH: Use cached context if available
+        // =============================================
+        if (cacheId) {
+          console.log(`[scan-navigate] Using cached context: ${cacheId}`);
+          const cacheApiStart = Date.now();
+
+          try {
+            // Build the prompt for this specific navigation request
+            const cachedPrompt = `${prompt}
+
+--- GUEST'S CURRENT CAMERA VIEW (ANALYZE THIS) ---
+[The guest's current view is attached. Compare it against the cached kitchen reference images to determine their location and provide navigation guidance.]`;
+
+            // Call Gemini API with cached content
+            const generateResponse = await fetch(
+              `${GEMINI_API_BASE}/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  cachedContent: cacheId,
+                  contents: [{
+                    role: 'user',
+                    parts: [
+                      { text: cachedPrompt },
+                      { inline_data: { mime_type: 'image/jpeg', data: cleanedImageBase64 } },
+                    ],
+                  }],
+                }),
+              }
+            );
+
+            console.log(`[scan-navigate] Cache API call complete in ${Date.now() - cacheApiStart}ms`);
+
+            if (!generateResponse.ok) {
+              const errorText = await generateResponse.text();
+              console.error(`[scan-navigate] Cache API error: ${generateResponse.status} - ${errorText}`);
+              // Fall through to non-cached approach
+            } else {
+              const generateData = await generateResponse.json();
+              const text = generateData.candidates?.[0]?.content?.parts?.[0]?.text;
+
+              if (text) {
+                // Parse the JSON response
+                const jsonMatch = text.match(/\{[\s\S]*\}/);
+                if (jsonMatch) {
+                  const navigationResponse: NavigationResponse = JSON.parse(jsonMatch[0]);
+
+                  // If arrived, include the item's instructions
+                  if (navigationResponse.arrived) {
+                    navigationResponse.next_instruction = item.instructions ||
+                      `You've found the ${itemName}! ${item.hint || ''}`;
+                  }
+
+                  // Log the scan (fire-and-forget for speed)
+                  supabase
+                    .from('guest_kit_access_logs')
+                    .select('id, scans_performed')
+                    .eq('kit_id', kitId)
+                    .order('accessed_at', { ascending: false })
+                    .limit(1)
+                    .single()
+                    .then(({ data: recentLog }: { data: { id: string; scans_performed: number } | null }) => {
+                      if (recentLog) {
+                        supabase
+                          .from('guest_kit_access_logs')
+                          .update({ scans_performed: (recentLog.scans_performed || 0) + 1 })
+                          .eq('id', recentLog.id);
+                      }
+                    });
+
+                  console.log(`[scan-navigate] CACHED response total time: ${Date.now() - scanStart}ms`);
+
+                  return successResponse({
+                    navigation: navigationResponse,
+                    item: {
+                      name: itemName,
+                      instructions: item.instructions,
+                      warning: item.warning_text,
+                      destination_image_url: item.destination_image_url,
+                      control_image_url: item.control_image_url,
+                    },
+                    zone: zone ? { name: zone.name, zone_type: zone.zone_type } : null,
+                    usedCache: true,
+                  });
+                }
+              }
+              console.log(`[scan-navigate] Cache response parsing failed, falling back to non-cached`);
+            }
+          } catch (cacheError) {
+            console.error('[scan-navigate] Cache usage error:', cacheError);
+            // Fall through to non-cached approach
+          }
+        }
+
+        // =============================================
+        // FALLBACK: Non-cached approach (fetch all images)
+        // =============================================
+        console.log(`[scan-navigate] Using non-cached approach`);
+
         try {
           // Create image part from guest's current camera view
           const guestImagePart = {
             inlineData: {
-              data: imageBase64.replace(/^data:image\/\w+;base64,/, ''),
+              data: cleanedImageBase64,
               mimeType: 'image/jpeg',
             },
           };
@@ -550,6 +820,8 @@ IMPORTANT for "highlight.region":
               .eq('id', recentLog.id);
           }
 
+          console.log(`[scan-navigate] NON-CACHED response total time: ${Date.now() - scanStart}ms`);
+
           return successResponse({
             navigation: navigationResponse,
             item: {
@@ -563,6 +835,7 @@ IMPORTANT for "highlight.region":
               name: zone.name,
               zone_type: zone.zone_type,
             } : null,
+            usedCache: false,
           });
         } catch (aiError) {
           console.error('AI navigation error:', aiError);
